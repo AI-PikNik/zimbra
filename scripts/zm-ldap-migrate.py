@@ -648,9 +648,9 @@ def data_migrate(cfg, old, new, exclude, only, dry, workdir, types, since, worke
             "«почта 118≠120 ✗» — на новом 118, на старом 120; «(+5)» — добавлено этим запуском")
         log("")
 
-    def export_url(name, types_, after=None, before=None):
+    def export_url(name, types_, after=None, before=None, extra=None):
         q = {"fmt": "tgz", "types": types_}
-        cond = []
+        cond = [extra] if extra else []
         if after:
             cond.append(f'after:"{after:%m/%d/%Y}"')        # after: — строго позже этого дня
         if before:
@@ -660,8 +660,9 @@ def data_migrate(cfg, old, new, exclude, only, dry, workdir, types, since, worke
         return f"{S_old.base}/home/{urllib.parse.quote(name)}/?{urllib.parse.urlencode(q)}"
 
     def jobs_for(todo, mbox_size):
-        """Части выгрузки: (метка, типы, after, before). Типы с одной датой — вместе;
-        почта большого ящика — по годам."""
+        """Части выгрузки: (метка, типы, after, before, заменяемая, доп. условие поиска).
+        Каждый тип — отдельно; почта большого ящика — по годам; корзина и спам — отдельной частью
+        (выгрузка Zimbra по умолчанию их пропускает, как и обычный поиск)."""
         groups = {}
         for t, sd in todo.items():
             groups.setdefault((sd, t != "message"), []).append(t)
@@ -671,11 +672,12 @@ def data_migrate(cfg, old, new, exclude, only, dry, workdir, types, since, worke
             # каждый тип — отдельным архивом: в общем архиве нескольких типов часть контактов терялась
             for t in ts:
                 if t != "message":
-                    jobs.append((TYPE_NAMES[t], t, sd, None, pre))
+                    jobs.append((TYPE_NAMES[t], t, sd, None, pre, None))
             if "message" not in ts:
                 continue
+            jobs.append(("почта: корзина и спам", "message", sd, None, False, "(under:trash OR in:junk)"))
             if not big:
-                jobs.append(("почта", "message", sd, None, False))
+                jobs.append(("почта", "message", sd, None, False, None))
                 continue
             y_now = run_date.year
             ranges = [("до 2000", None, datetime.date(2000, 1, 1))]
@@ -685,7 +687,7 @@ def data_migrate(cfg, old, new, exclude, only, dry, workdir, types, since, worke
             for label, a, b in ranges:
                 if sd and b and b <= sd + datetime.timedelta(days=1):
                     continue                                 # период целиком до даты досинхронизации
-                jobs.append((f"почта {label}", "message", max(a, sd) if (a and sd) else (a or sd), b, False))
+                jobs.append((f"почта {label}", "message", max(a, sd) if (a and sd) else (a or sd), b, False, None))
         return sorted(jobs, key=lambda j: not j[4])          # сначала заменяемые
 
     if accounts and not verify_only and not reindex_only:
@@ -868,12 +870,13 @@ def data_migrate(cfg, old, new, exclude, only, dry, workdir, types, since, worke
         """Заменяемые типы: сначала выгрузка со старого, и только если она удалась — очистка на новом
         и загрузка. Если старый сервер недоступен, на новом ничего не удаляется."""
         total, parts_done = 0, 0
-        for label, ttypes, after, before, pre in jobs:
+        for label, ttypes, after, before, pre, extra in jobs:
             if cancel.is_set():
                 return "ПРЕРВАН", "прерван пользователем", total
             tag = f"{label} " if label else ""
-            path = os.path.join(ddir, f"{name}{'.' + label.replace(' ', '_') if label else ''}.{ttypes.replace(',', '-')}.tgz")
-            err = export_part(name, export_url(name, ttypes, after, before), path, tag)
+            safe = re.sub(r"[^\w.-]+", "_", label).strip("_")
+            path = os.path.join(ddir, f"{name}{'.' + safe if safe else ''}.{ttypes.replace(',', '-')}.tgz")
+            err = export_part(name, export_url(name, ttypes, after, before, extra), path, tag)
             if err:
                 if os.path.exists(path):
                     os.remove(path)
