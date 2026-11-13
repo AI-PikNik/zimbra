@@ -1,0 +1,61 @@
+[DEFAULT]
+usedns   = no
+ignoreip = 127.0.0.1/8 ::1 10.0.0.0/16
+banaction          = nftables-multiport
+banaction_allports = nftables-allports
+findtime = 1d
+bantime  = 1d
+bantime.increment = true
+bantime.maxtime   = 30d
+maxretry = 3
+
+[zimbra-smtp]
+enabled  = true
+filter   = zimbra-smtp
+logpath  = /var/log/zimbra.log
+port     = 25,465,587
+action   = %(action_)s
+           abuseipdb[abuseipdb_category="18"]
+
+[zimbra-web]
+enabled  = true
+filter   = zimbra-web
+logpath  = /opt/zimbra/log/mailbox.log
+port     = 80,443,110,143,993,995,7071
+action   = %(action_)s
+           abuseipdb[abuseipdb_category="18,21"]
+
+[zimbra-mailproxy]
+enabled  = true
+filter   = zimbra-mailproxy
+logpath  = /opt/zimbra/log/nginx.log
+port     = 110,143,993,995
+action   = %(action_)s
+           abuseipdb[abuseipdb_category="18"]
+
+[zimbra-nginx]
+enabled  = true
+filter   = zimbra-nginx
+logpath  = /opt/zimbra/log/nginx.log
+port     = 80,443
+action   = %(action_)s
+           abuseipdb[abuseipdb_category="14,19"]
+
+[ufw-portscan]
+enabled   = true
+filter    = ufw-portscan
+logpath   = /var/log/ufw.log
+banaction = %(banaction_allports)s
+maxretry  = 20
+findtime  = 2m
+bantime   = 1d
+action    = %(action_)s
+            abuseipdb[abuseipdb_category="14"]
+
+[recidive]
+enabled   = true
+logpath   = /var/log/fail2ban.log
+banaction = %(banaction_allports)s
+findtime  = 1d
+maxretry  = 3
+bantime   = 1w

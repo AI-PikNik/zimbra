@@ -1,0 +1,35 @@
+# Настройки zm-ldap-migrate.py
+# Скопировать в ~/migrate.conf на НОВОМ сервере, заполнить, затем: chmod 600 ~/migrate.conf
+# Скрипт откажется работать, если файл доступен кому-то кроме владельца.
+
+[old]
+# LDAP старого сервера (на старом сервере: zmlocalconfig -s ldap_url)
+ldap_url = ldap://mail-old.example.com:389
+# Учётка чтения LDAP (на старом сервере: zmlocalconfig -s zimbra_ldap_userdn)
+bind_dn  = uid=zimbra,cn=admins,cn=zimbra
+# Пароль (на старом сервере: zmlocalconfig -s zimbra_ldap_password)
+bind_pw  = ВСТАВИТЬ_ПАРОЛЬ
+# Шифровать соединение (STARTTLS). Сертификат LDAP старого сервера не проверяется.
+starttls = yes
+
+[old_rest]
+# Для режима --data: выгрузка содержимого ящиков со старого сервера через REST (порт 7071).
+# Порт 7071 старого сервера должен быть открыт для нового сервера.
+url        = https://mail-old.example.com:7071
+# Глобальный администратор старого сервера
+admin      = admin@mail-old.example.com
+password   = ВСТАВИТЬ_ПАРОЛЬ
+# Проверять сертификат старого сервера (no — если самоподписанный или выпущен на другое имя)
+verify_tls = no
+
+[migrate]
+# Домены, которые не переносятся (через запятую). mail-old.example.com — домен старого сервера:
+# в нём только admin@ и системные учётки, на новом сервере есть свой mail-new.example.com.
+exclude_domains = mail-old.example.com
+# Каталог для журналов и командных файлов (создаётся подкаталог с датой, права 700).
+# /opt/zimbra принадлежит root — каталог создать заранее от root:
+#   install -d -o zimbra -g zimbra -m 700 /opt/zimbra/migration
+workdir = /opt/zimbra/migration
+# Для --data: ящики больше этого размера (МБ) переносятся по частям — почта по годам,
+# остальное отдельным архивом. Защищает от таймаутов и нехватки памяти на больших ящиках.
+chunk_mb = 2048

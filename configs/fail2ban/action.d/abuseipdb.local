@@ -1,0 +1,16 @@
+[Definition]
+norestored = 1
+actionban = ts_iso=$(date -d @<time> '+%%Y-%%m-%%dT%%H:%%M:%%S%%:z'); \
+            ts_h=$(date -d @<time> '+%%Y-%%m-%%d %%H:%%M:%%S %%Z'); \
+            curl -sS --fail --max-time 10 'https://api.abuseipdb.com/api/v2/report' \
+              -H 'Accept: application/json' -H 'Key: <abuseipdb_apikey>' \
+              --data-urlencode 'ip=<ip>' \
+              --data-urlencode "timestamp=$ts_iso" \
+              --data-urlencode "comment=<abuseipdb_comment>, last attempt $ts_h" \
+              --data 'categories=<abuseipdb_category>' >/dev/null \
+            || logger -t f2b-abuseipdb "report failed for <ip> (<name>)"
+
+[Init]
+abuseipdb_apikey   = ВАШ_КЛЮЧ
+abuseipdb_reporter = mail-new
+abuseipdb_comment  = Fail2Ban [<abuseipdb_reporter>] jail <name>: <failures> failed attempts
