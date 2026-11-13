@@ -708,7 +708,7 @@ zmcontrol restart
 | Mail Proxy → Relay Domains | example.com, example.net, example.org, shop.example |
 | Mail Proxy → Networks | IP Zimbra (для приёма исходящей на порт 26) |
 | Mail Proxy → Options → Verify Receivers | через LDAP Zimbra; 450 на время переезда, затем 550 |
-| Mail Proxy → DKIM | подпись для всех четырёх доменов, ключи → TXT в DNS |
+| Mail Proxy → DKIM | один селектор `pmg2026` (2048) на все домены, TXT в DNS каждого домена — порядок ниже |
 | Certificates → ACME | сертификат для SMTP на каждом узле |
 
 Обучение Bayes на PMG из пометок Junk/Not Junk в Zimbra — отдельным workflow в n8n.
@@ -745,6 +745,32 @@ cat /etc/pmg/transport
 | Add TLS received header | Yes | в заголовке `Received` письма указываются протокол и шифр, с которыми оно пришло из интернета: по заголовкам видно, было ли соединение зашифровано. Отправителю и получателю ничего не меняет |
 | TLS Destination Policy | пусто | обязательный TLS при отправке задаётся отдельно для партнёров, которые его требуют (банки, госорганы): домен + политика `encrypt` (только шифрование) или `verify` (шифрование и проверка сертификата). Для остальных — по возможности |
 | TLS Inbound Domains | пусто | обязательный TLS при приёме для своих доменов отверг бы почту от старых серверов без TLS |
+
+**Mail Proxy → DKIM.** Один ключ и один селектор на все домены; на второй узел кластера синхронизируется с master. Порядок важен: сначала DNS, потом включение подписи — иначе получатели не найдут ключ, а при строгом DMARC почту начнут отклонять.
+
+| Параметр | Значение | Почему |
+| --- | --- | --- |
+| Selector | `pmg2026` | год в имени — для замены ключа: следующий `pmg2027`, старый и новый временно публикуются вместе |
+| Key Size | 2048 | 1024 слабый; 4096 и 8192 дают TXT в несколько КБ, часть DNS-панелей их не примет |
+| Signing Domain Source | Header | подпись по домену из `From:` — его проверяет DMARC |
+| Sign all Outgoing Mail | No | подписываются только домены из Sign Domains; иначе PMG подпишет и чужие домены (пересылку), для которых ключа в DNS нет |
+| Sign Domains | example.com, example.net, example.org, shop.example, news.example, intl.example | все домены, от имени которых отправляет Zimbra |
+| Enable DKIM Signing | Yes — последним шагом | после публикации и проверки DNS |
+
+1. Проверить текущее состояние: `dig +short TXT _dmarc.<домен>`, `dig +short TXT <домен> | grep spf`; в письме, отправленном наружу, — заголовок `DKIM-Signature:` (`d=` домен, `s=` селектор). Если старый Zimbra подписывает сам, после переезда подписывает только PMG, DKIM на новом Zimbra не включается.
+2. Создать селектор (`pmg2026`, 2048), Overwrite existing file = No.
+3. View DNS Record → опубликовать TXT `pmg2026._domainkey.<домен>` для каждого домена (ключ у всех один). Разбиение длинной записи на части по 255 символов — норма.
+4. Проверить снаружи для каждого домена: `dig +short TXT pmg2026._domainkey.<домен>` → `v=DKIM1; k=rsa; p=…` с ключом из PMG.
+5. Добавить Sign Domains, затем Enable DKIM Signing = Yes, Signing Domain Source = Header, Sign all Outgoing Mail = No.
+6. Письмо из Zimbra на ящик Gmail → «Показать оригинал»: `DKIM: PASS` с вашим доменом; повторить для одного-двух второстепенных доменов.
+
+SPF всех доменов должен включать внешние адреса PMG: после переезда почта уходит в интернет с них.
+
+| Проверка | Команда | Ожидаемый результат |
+| --- | --- | --- |
+| Ключ в DNS | `dig +short TXT pmg2026._domainkey.example.com` | `v=DKIM1; k=rsa; p=…`, совпадает с View DNS Record |
+| Подпись | письмо на Gmail → «Показать оригинал» | `DKIM: PASS`, `d=<ваш домен>` |
+| SPF и DMARC | там же | `SPF: PASS`, `DMARC: PASS` |
 
 ```bash
 # на PMG: DNSBL отвечают (Spamhaus не работает через публичные резолверы, Barracuda — без регистрации DNS-сервера)
