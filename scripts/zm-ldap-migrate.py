@@ -102,10 +102,58 @@ LOG = None
 SCOPED = False
 
 
+# ---------------------------------------------------------------- вывод: цвет и форматирование
+# Цвет только в терминале; в журнал и при перенаправлении вывода — обычный текст. Отключить: NO_COLOR=1
+COLOR = sys.stdout.isatty() and not os.environ.get("NO_COLOR") and os.environ.get("TERM") != "dumb"
+ANSI = re.compile(r"\033\[[0-9;]*m")
+_STYLE = {"head": "1;36", "total": "1;35", "ok": "32", "err": "1;31", "bad": "31", "warn": "33",
+          "dim": "2", "bold": "1", "th": "1;4"}
+
+
+def c(kind, text):
+    return f"\033[{_STYLE[kind]}m{text}\033[0m" if COLOR and text else str(text)
+
+
+def _width():
+    return max(60, min(shutil.get_terminal_size((120, 20)).columns, 160))
+
+
+def _wrap(text, first, rest):
+    import textwrap
+    return textwrap.fill(text, width=_width(), initial_indent=first, subsequent_indent=rest,
+                         break_on_hyphens=False, break_long_words=False)
+
+
+def _style(line):
+    """Оформление строки по её началу. Строки, уже содержащие цвет, не трогаются."""
+    if not line or ANSI.search(line):
+        return line
+    if line.startswith("====="):
+        return c("total", line)
+    if line.startswith("==="):
+        return c("head", "━━ " + line[3:].strip() + " " + "━" * max(3, _width() - len(line) - 4))
+    if line.startswith("ОШИБКА"):
+        return c("err", _wrap(line, "", "  "))
+    if line.startswith(("  ! ", "    ! ")):
+        ind = line[:line.index("!")]
+        return c("warn", _wrap(line.strip()[2:], ind + "⚠ ", ind + "  "))
+    if line.startswith("  ✗ "):
+        return c("bad", _wrap(line.strip(), "  ", "    "))
+    if line.startswith(("  … ", "  Обозначения", "Журнал:", "  Подробно", "  Даты", "    на новом")):
+        return c("dim", _wrap(line.strip(), "  " if line.startswith(" ") else "", "    "))
+    if line.startswith(("Режим:", "Домены:", "Учётки:")):
+        k, v = line.split(":", 1)
+        return c("bold", k + ":") + v
+    if line.startswith(("  Тип ", "  Объекты")):
+        return c("th", line)
+    return line
+
+
 def log(msg=""):
-    print(msg)
+    msg = str(msg)
+    print("\n".join(_style(x) for x in msg.split("\n")), flush=True)
     if LOG:
-        LOG.write(msg + "\n")
+        LOG.write(ANSI.sub("", msg) + "\n")
         LOG.flush()
 
 
@@ -489,6 +537,10 @@ def data_migrate(cfg, old, new, exclude, only, dry, workdir, types, since, worke
     n_names = {dn_to_name(dn).lower() for dn, _ in new.search("(objectClass=zimbraAccount)", attrs=["uid"])}
     missing = [a for a in accounts if a.lower() not in n_names]
     accounts = [a for a in accounts if a.lower() in n_names]
+    if missing and not accounts:
+        die(f"на новом сервере не найдено ни одной из {len(missing)} учёток (LDAP нового сервера вернул "
+            f"{len(n_names)} учёток). Если LDAP уже переносился — проверьте LDAP нового сервера: "
+            f"zmprov -l gaa | wc -l. Если ещё нет — сначала: --ldap")
 
     tlist = list(dict.fromkeys(types.split(",")))
     views = [TYPE_VIEW[t] for t in tlist]
@@ -558,7 +610,9 @@ def data_migrate(cfg, old, new, exclude, only, dry, workdir, types, since, worke
     log(f"  ящиков: {len(accounts)}; потоков: {workers}"
         + ("" if reindex_only else f"; источник: {S_old.base}; приёмник: {S_new.base}"))
     if missing:
-        log(f"  ! нет на новом сервере, пропущены ({len(missing)}): {', '.join(missing)}")
+        log(f"  ! нет на новом сервере, пропущены ({len(missing)}): {', '.join(missing[:5])}"
+            + (f" и ещё {len(missing) - 5} — список в журнале" if len(missing) > 5 else ""))
+        log_file("    все пропущенные: " + ", ".join(missing))
     if not verify_only and not reindex_only:
         if diff_only and not (force or sync or since):
             log("  ! --diff-only без --force: в ящиках, куда данные уже переносились, они пропускаются. "
@@ -651,11 +705,11 @@ def data_migrate(cfg, old, new, exclude, only, dry, workdir, types, since, worke
                 desc += f"; пропуск (уже перенесено): {', '.join(TYPE_NAMES[t] for t in skipped)}"
             groups.setdefault(desc, []).append(a)
             log_file(f"  план {a}: {desc}")
-        log(f"  План по {len(accounts)} ящикам (по каждому ящику — в журнале):")
+        log(c("bold", f"  План по {len(accounts)} ящикам") + c("dim", " (по каждому ящику — в журнале)"))
         for desc, names in sorted(groups.items(), key=lambda x: -len(x[1])):
-            log(f"    {len(names):>4} ящ.: {desc}")
-            if len(names) <= 15:
-                log(f"           {', '.join(names)}")
+            print(c("bold", f"    {len(names):>4} ящ.") + "\n" + _wrap(desc, "      • ", "        ").replace(", ", "\n      • ")
+                  + ("\n" + c("dim", _wrap(", ".join(names), "        ", "        ")) if len(names) <= 15 else ""))
+            log_file(f"    {len(names):>4} ящ.: {desc}" + (f"\n           {', '.join(names)}" if len(names) <= 15 else ""))
         return []
 
     ddir = os.path.join(workdir, "data")
@@ -915,14 +969,21 @@ def data_migrate(cfg, old, new, exclude, only, dry, workdir, types, since, worke
             res["msg"] = (res["msg"] + "; " if res["msg"] else "") + f"подсчёт на новом: {nerr}"
         return res
 
+    ST_KIND = {"OK": "ok", "СВЕРКА": "ok", "ОШИБКА": "err", "ПРЕРВАН": "err", "ПРОПУЩЕН": "dim",
+               "СОВПАДАЕТ": "dim", "НЕТ НОВЫХ": "dim"}
+
     def line(res, n_total):
-        st = res["status"] + (" ✗" if res["diff"] and res["status"] != "ОШИБКА" else "")
+        bad = res["diff"] and res["status"] != "ОШИБКА"
+        st_plain = res["status"] + (" ✗" if bad else "")
+        st = c("bad" if bad else ST_KIND.get(res["status"], "bold"), st_plain) + " " * (11 - len(st_plain))
         pct = stats["done"] * 100 // max(1, n_total)
+        head = c("dim", f"  [{stats['done']:>3}/{n_total} {pct:>3}%]") + f" {st} {res['name']:<34}"
+        err = ("\n" + c("err", _wrap(res["msg"], "        ! ", "          "))) if res["msg"] else ""
         if reindex_only:
             p = res["ridx"]
-            items = (f"проиндексировано {p['numSucceeded']}, ошибок {p['numFailed']}" if p else "")
-            return f"  [{stats['done']:>3}/{n_total} {pct:>3}%] {st:<11} {res['name']:<34} {items}" \
-                   + (f"  ! {res['msg']}" if res["msg"] else "")
+            items = (f"проиндексировано {p['numSucceeded']}"
+                     + (c("bad", f", ошибок {p['numFailed']}") if p["numFailed"] else "")) if p else ""
+            return head + " " + items + err
         parts = []
         for v, o_, b_, a_ in res["rows"]:
             add = (a_ - b_) if (a_ is not None and b_ is not None) else 0
@@ -930,21 +991,20 @@ def data_migrate(cfg, old, new, exclude, only, dry, workdir, types, since, worke
                 continue
             s_ = f"{vname[v]} {a_ if a_ is not None else '?'}"
             if o_ is not None and a_ is not None:
-                s_ += " ✓" if o_ == a_ else f"≠{o_} ✗"
+                s_ = c("ok", s_ + " ✓") if o_ == a_ else c("bad", f"{s_}≠{o_} ✗")
             if add:
-                s_ += f" ({add:+d})"
+                s_ += c("dim", f" ({add:+d})")
             parts.append(s_)
-        body = " · ".join(parts) or "пусто"
-        size_txt = "" if verify_only else (" " * 10 if res["status"] in ("ПРОПУЩЕН", "СОВПАДАЕТ") else f"{human(res['size']):>8}  ")
+        body = c("dim", " · ").join(parts) or c("dim", "пусто")
+        size_txt = "" if verify_only else (" " * 10 if res["status"] in ("ПРОПУЩЕН", "СОВПАДАЕТ")
+                                           else f"{human(res['size']):>8}  ")
         extra = []
         if res.get("ridx"):
             extra.append(f"индекс: {res['ridx']['numSucceeded']}" + (f", ошибок {res['ridx']['numFailed']}"
                                                                      if res['ridx']['numFailed'] else ""))
         if res["info"]:
             extra.append(res["info"])
-        return (f"  [{stats['done']:>3}/{n_total} {pct:>3}%] {st:<11} {res['name']:<34} {size_txt}{body}"
-                + (f"  [{'; '.join(extra)}]" if extra else "")
-                + (f"\n        ! {res['msg']}" if res["msg"] else ""))
+        return (head + " " + size_txt + body + (c("dim", f"  [{'; '.join(extra)}]") if extra else "") + err)
 
     stop = threading.Event()
     cancel = threading.Event()
