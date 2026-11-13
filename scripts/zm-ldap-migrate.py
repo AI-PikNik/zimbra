@@ -539,7 +539,7 @@ def data_migrate(cfg, old, new, exclude, only, dry, workdir, types, since, worke
     n_names = {dn_to_name(dn).lower() for dn, _ in new.search("(objectClass=zimbraAccount)", attrs=["uid"])}
     missing = [a for a in accounts if a.lower() not in n_names]
     accounts = [a for a in accounts if a.lower() in n_names]
-    if missing and not accounts:
+    if missing and not accounts and not dry:
         die(f"на новом сервере не найдено ни одной из {len(missing)} учёток (LDAP нового сервера вернул "
             f"{len(n_names)} учёток). Если LDAP уже переносился — проверьте LDAP нового сервера: "
             f"zmprov -l gaa | wc -l. Если ещё нет — сначала: --ldap")
@@ -614,7 +614,10 @@ def data_migrate(cfg, old, new, exclude, only, dry, workdir, types, since, worke
         + f"; потоков: {workers}")
     if not reindex_only:
         log(f"  источник: {S_old.base}\n  приёмник: {S_new.base}")
-    if missing:
+    if missing and dry and not reindex_only:
+        log(f"  ! на новом сервере пока нет {len(missing)} учёток — в плане они учтены; их создаёт перенос LDAP (--ldap)")
+        log_file("    нет на новом: " + ", ".join(missing))
+    elif missing:
         log(f"  ! пропущены — нет на новом сервере: {', '.join(missing[:5])}"
             + (f" и ещё {len(missing) - 5} (полный список в журнале)" if len(missing) > 5 else ""))
         log_file("    все пропущенные: " + ", ".join(missing))
@@ -701,20 +704,37 @@ def data_migrate(cfg, old, new, exclude, only, dry, workdir, types, since, worke
         log(f"  будут переиндексированы: {', '.join(accounts[:10])}" + (" …" if len(accounts) > 10 else ""))
         return []
     if dry:
+        plan_acc = sorted(accounts + missing)
+        missing_l = {a.lower() for a in missing}
         groups = {}
-        for a in accounts:
-            todo, skipped = type_plan(a)
-            rl_ = reloads(a)
-            desc = ", ".join(f"{TYPE_NAMES[t]} " + (f"после {d:%d.%m.%Y}" if d else
-                                                     "заново (очистка на новом)" if t in rl_ else "полностью")
-                             for t, d in todo.items()) or "нечего переносить"
-            if skipped:
-                desc += f"; пропуск (уже перенесено): {', '.join(TYPE_NAMES[t] for t in skipped)}"
+        for a in plan_acc:
+            if a.lower() in missing_l:
+                # учётки ещё нет: после --ldap переносится всё, записи в data-state.json не действуют
+                desc = " · ".join(["учётка создаётся переносом LDAP"] + [f"{TYPE_NAMES[t]} полностью" for t in tlist])
+            else:
+                todo, skipped = type_plan(a)
+                rl_ = reloads(a)
+                parts = [f"{TYPE_NAMES[t]} " + (f"после {d:%d.%m.%Y}" if d else
+                                                 "заново (очистка на новом)" if t in rl_ else "полностью")
+                         for t, d in todo.items()]
+                if skipped:
+                    parts.append("пропуск, если на новом уже есть: " + ", ".join(TYPE_NAMES[t] for t in skipped))
+                desc = " · ".join(parts) or "нечего переносить"
             groups.setdefault(desc, []).append(a)
             log_file(f"  план {a}: {desc}")
-        log(c("bold", f"  План по {len(accounts)} ящикам") + c("dim", " (по каждому ящику — в журнале)"))
+        if old_soap and plan_acc:
+            ex8 = ThreadPoolExecutor(max_workers=8)
+            try:
+                psz = list(ex8.map(lambda a: S_old.mbox_size(acc_id.get(a.lower(), "")), plan_acc))
+            finally:
+                ex8.shutdown(wait=False, cancel_futures=True)
+            known = [x for x in psz if x]
+            big_n = sum(1 for x in known if x > chunk_bytes)
+            log(f"  объём на старом сервере: {human(sum(known))}; крупнее {chunk_mb} МБ (почта по годам): {big_n}")
+        log(c("bold", f"  План по {len(plan_acc)} ящикам") + c("dim", " (по каждому ящику — в журнале)"))
         for desc, names in sorted(groups.items(), key=lambda x: -len(x[1])):
-            print(c("bold", f"    {len(names):>4} ящ.") + "\n" + _wrap(desc, "      • ", "        ").replace(", ", "\n      • ")
+            print(c("bold", f"    {len(names):>4} ящ.") + "\n"
+                  + "\n".join(_wrap(x, "      • ", "        ") for x in desc.split(" · "))
                   + ("\n" + c("dim", _wrap(", ".join(names), "        ", "        ")) if len(names) <= 15 else ""))
             log_file(f"    {len(names):>4} ящ.: {desc}" + (f"\n           {', '.join(names)}" if len(names) <= 15 else ""))
         return []
@@ -867,7 +887,7 @@ def data_migrate(cfg, old, new, exclude, only, dry, workdir, types, since, worke
                 try:
                     res["removed"] = res.get("removed", 0) + S_new.empty_views(name, rv)
                     if res["removed"]:
-                        res["info"] = f"очищено на новом: {res['removed']}"
+                        res["cleared"] = f"очищено на новом: {res['removed']}"
                 except Exception as e:
                     os.remove(path)
                     return "ОШИБКА", f"очистка на новом: {e}", total
@@ -924,6 +944,18 @@ def data_migrate(cfg, old, new, exclude, only, dry, workdir, types, since, worke
         oc, oerr = safe_counts(S_old, name)
         nb, nerr = safe_counts(S_new, name)
         na = nb
+        if skipped and oc is not None and nb is not None:
+            # отметка «уже перенесено» есть, а на новом пусто (ящик пересоздан) — переносим заново
+            # почта: повтор безопасен (Zimbra отсеивает повторы) — заново, если на новом меньше половины;
+            # остальное: только если на новом пусто
+            stale = [t for t in skipped if oc.get(TYPE_VIEW[t], 0) > 0 and
+                     (nb.get(TYPE_VIEW[t], 0) * 2 < oc.get(TYPE_VIEW[t], 0) if t == "message"
+                      else nb.get(TYPE_VIEW[t], 0) == 0)]
+            if stale:
+                skipped = [t for t in skipped if t not in stale]
+                todo.update({t: None for t in stale})
+                res["info"] = "отмечено как перенесённое, но на новом нет — заново: " + \
+                    ", ".join(TYPE_NAMES[t] for t in stale)
         same = (oc is not None and nb is not None and all(oc.get(v, 0) == nb.get(v, 0) for v in views))
         if diff_only and not verify_only and (oc is None or nb is None):
             res["status"], res["msg"] = "ОШИБКА", "--diff-only: не удалось посчитать количество на обоих серверах"
@@ -1011,6 +1043,8 @@ def data_migrate(cfg, old, new, exclude, only, dry, workdir, types, since, worke
                                                                      if res['ridx']['numFailed'] else ""))
         if res["info"]:
             extra.append(res["info"])
+        if res.get("cleared"):
+            extra.append(res["cleared"])
         return (head + " " + size_txt + body + (c("dim", f"  [{'; '.join(extra)}]") if extra else "") + err)
 
     stop = threading.Event()
