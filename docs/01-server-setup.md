@@ -705,7 +705,7 @@ zmcontrol restart
 | Раздел | Значение |
 | --- | --- |
 | Mail Proxy → Relaying → Default Relay | mail-new.example.com, порт 25, Disable MX lookup = Yes (задать при переключении) |
-| Mail Proxy → Relay Domains | example.com, example.net, example.org, shop.example |
+| Mail Proxy → Relay Domains | example.com, example.net, example.org, shop.example, news.example, intl.example |
 | Mail Proxy → Networks | IP Zimbra (для приёма исходящей на порт 26) |
 | Mail Proxy → Options → Verify Receivers | через LDAP Zimbra; 450 на время переезда, затем 550 |
 | Mail Proxy → DKIM | один селектор `pmg2026` (2048) на все домены, TXT в DNS каждого домена — порядок ниже |
