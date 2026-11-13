@@ -139,7 +139,9 @@ def _style(line):
         return c("warn", _wrap(line.strip()[2:], ind + "⚠ ", ind + "  "))
     if line.startswith("  ✗ "):
         return c("bad", _wrap(line.strip(), "  ", "    "))
-    if line.startswith(("  … ", "  Обозначения", "Журнал:", "  Подробно", "  Даты", "    на новом")):
+    if line.startswith("    • "):
+        return c("warn", line)
+    if line.startswith(("  … ", "  Обозначения", "Журнал:", "  Подробно", "  Даты", "  Полный список")):
         return c("dim", _wrap(line.strip(), "  " if line.startswith(" ") else "", "    "))
     if line.startswith(("Режим:", "Домены:", "Учётки:")):
         k, v = line.split(":", 1)
@@ -1107,16 +1109,39 @@ def data_migrate(cfg, old, new, exclude, only, dry, workdir, types, since, worke
         log(f"  {vname[v]:<12}{so:>12}{sn:>12}" + ("" if verify_only else f"{sa:>12}") + f"{nd:>12}")
     diffs = sorted(x["name"] for x in results if x["diff"] and x["status"] != "ОШИБКА")
     if diffs:
-        log(f"\n  ✗ Расхождения ({len(diffs)}): {', '.join(diffs[:30])}" + (" …" if len(diffs) > 30 else ""))
-        log("    на новом меньше — новое на старом: --sync; не всё перенесено: "
-            "--data --types message --force --diff-only;")
-        log("    на новом больше у контактов/календарей/задач/портфеля — перенести заново: --force --diff-only")
+        cats = {"empty": [], "less": [], "more": []}
+        for x in sorted(results, key=lambda x: x["name"]):
+            if not x["diff"] or x["status"] == "ОШИБКА":
+                continue
+            rows = [(o_, a_) for _, o_, _, a_ in x["rows"] if o_ is not None and a_ is not None]
+            if rows and all(a_ == 0 for _, a_ in rows):
+                cats["empty"].append(x["name"])
+            if any(0 < a_ < o_ for o_, a_ in rows):
+                cats["less"].append(x["name"])
+            if any(a_ > o_ for o_, a_ in rows):
+                cats["more"].append(x["name"])
+        log(f"\n  ✗ Расхождения в {len(diffs)} ящиках (по каждому — в data-report.csv):")
+        hints = {
+            "empty": ("на новом пусто — данные ещё не переносились", "запустить: --data"),
+            "less": ("на новом меньше, чем на старом", "добрать новое: --data --sync; "
+                     "если разница большая — перенести заново: --data --force --diff-only"),
+            "more": ("на новом больше, чем на старом (обычно дубли контактов или календарей)",
+                     "перенести заново: --data --force --diff-only"),
+        }
+        for k, names in cats.items():
+            if names:
+                what, todo = hints[k]
+                log(f"    • {what}: {len(names)}")
+                log(f"        {todo}")
+                log(c("dim", _wrap(", ".join(names[:8]) + (f" и ещё {len(names) - 8}" if len(names) > 8 else ""),
+                                   "        ", "        ")))
     log(f"  Подробно по каждому ящику: {csv_path}")
     if not verify_only:
         log(f"  Даты переносов (для --sync и защиты от повторов): {state_path}")
     out = [f"{x['name']}: {x['msg']}" for x in sorted(errs, key=lambda x: x["name"])]
     if verify_only:
-        out += [f"{n}: расхождение по количеству" for n in diffs]
+        if diffs:
+            out.append(f"расхождение по количеству в {len(diffs)} ящиках — см. выше и data-report.csv")
     return out
 
 
@@ -1320,10 +1345,11 @@ def main():
                                   diff_only=args.diff_only)
             if errors:
                 rc = 2
-                log(f"\n===== {'РАСХОЖДЕНИЯ' if args.verify else 'ОШИБКИ'} ({len(errors)})"
-                    + ("" if args.verify else " — повторить: --data --only <адрес>"))
-                for e in errors:
-                    log("  " + e)
+                real = [e for e in errors if not e.startswith("расхождение по количеству")]
+                if real:      # расхождения по количеству уже показаны в итоге выше
+                    log(f"\n===== ОШИБКИ ({len(real)}) — повторить: --data --only <адрес>")
+                    for e in real:
+                        log("  " + e)
     finally:
         old.cleanup()
         new.cleanup()
@@ -1401,13 +1427,20 @@ def verify(old, new, exclude, only, workdir):
 
     stats, problems = {}, []
 
+    missing_cnt = [0]
+
     def check(kind, label, issues):
         s = stats.setdefault(kind, [0, 0])
         s[0] += 1
         if issues:
             s[1] += 1
-            problems.append(f"[{kind}] {label}")
-            problems.extend("      " + i for i in issues)
+            if issues == ["нет на новом сервере"]:
+                missing_cnt[0] += 1
+            if len(issues) == 1:
+                problems.append(f"[{kind}] {label} — {issues[0]}")
+            else:
+                problems.append(f"[{kind}] {label} — расхождений: {len(issues)}")
+                problems.extend("      " + i for i in issues)
 
     for dn, a in o["cos"]:
         name = first(a, "cn")
@@ -1481,7 +1514,12 @@ def verify(old, new, exclude, only, workdir):
         for p in problems[:60]:
             log("  " + p)
         if len(problems) > 60:
-            log(f"  … полный список: {path}")
+            log(f"  … и ещё {len(problems) - 60} строк")
+        log(f"  Полный список: {path}")
+        if missing_cnt[0]:
+            log(f"  ! объектов нет на новом сервере: {missing_cnt[0]} — их создаёт перенос LDAP: --ldap")
+        if len(problems) > missing_cnt[0]:
+            log("  ! у остальных отличаются атрибуты — повторный --ldap перезапишет их значениями со старого сервера")
     else:
         log("\n  Расхождений нет")
     return not problems
