@@ -207,6 +207,34 @@ imapsync --version
 
 Если imapsync запускается с машины вне 10.0.0.0/16, её адрес добавить в `ignoreip` fail2ban на обоих серверах: ошибки входа при отладке иначе приведут к бану.
 
+### 0.8. Размер писем и вложений
+
+Лимит письма целиком — 100 МБ на всём пути: PMG (раздел 3) и Zimbra одинаково. Лимит считается по письму в виде, в котором оно идёт по SMTP: вложения и текст закодированы base64, это около +37 % к исходному размеру (×4/3 за кодирование и ×78/76 за переносы строк ≈ ×1,368). Отсюда лимиты частей:
+
+| Параметр | Значение | Байт | Что ограничивает |
+| --- | --- | --- | --- |
+| `zimbraMtaMaxMessageSize` | 100 МБ | 104857600 | письмо целиком при отправке и приёме по SMTP, в том числе из Outlook и с телефона |
+| `zimbraMailContentMaxSize` | 12 МБ | 12582912 | текст письма в веб-клиенте, включая картинки, вставленные прямо в HTML |
+| `zimbraFileUploadMaxSize` | 60 МБ | 62914560 | вложения в веб-клиенте, все вместе |
+
+Проверка худшего случая: (12 + 60) × 1,368 ≈ 98,5 МБ — письмо проходит, запас около 1,5 МБ на заголовки. Для сравнения, 15 + 60 МБ дают ≈ 102,6 МБ и не проходят.
+
+```bash
+# от zimbra
+zmprov mcf zimbraMtaMaxMessageSize 104857600
+zmprov mcf zimbraMailContentMaxSize 12582912
+zmprov mcf zimbraFileUploadMaxSize 62914560
+zmmtactl reload
+```
+
+Почтовые программы (Outlook, Thunderbird) лимит вложений веб-клиента не видят: для них действует только лимит письма целиком, около 73 МБ файлов. Внешние серверы сравнивают только общий размер письма со своим лимитом: Gmail — 25 МБ на отправку, Microsoft 365 — 36 МБ по умолчанию ([SMTPedia, 28.08.2026](https://smtpedia.com/email-attachment-size-limits/)). Наружу без риска отказа проходят вложения примерно до 18–20 МБ; при отказе отправитель получает уведомление о недоставке. Большие файлы — ссылкой из Nextcloud.
+
+| Проверка | Команда (от zimbra) | Ожидаемый результат |
+| --- | --- | --- |
+| Лимиты Zimbra | `zmprov gcf zimbraMtaMaxMessageSize`, затем так же `zimbraMailContentMaxSize` и `zimbraFileUploadMaxSize` (по одному атрибуту за вызов) | 104857600, 12582912, 62914560 |
+| Лимит Postfix | `postconf -h message_size_limit` | 104857600 |
+| Веб-клиент | приложить файлы общим размером больше 60 МБ | сообщение о превышении размера |
+
 ### Проверка раздела 0
 
 | Проверка | Команда | Ожидаемый результат |
@@ -676,14 +704,60 @@ zmcontrol restart
 
 | Раздел | Значение |
 | --- | --- |
-| Mail Proxy → Relaying → Default Relay | mail-new.example.com, порт 25 |
+| Mail Proxy → Relaying → Default Relay | mail-new.example.com, порт 25, Disable MX lookup = Yes (задать при переключении) |
 | Mail Proxy → Relay Domains | example.com, example.net, example.org, shop.example |
 | Mail Proxy → Networks | IP Zimbra (для приёма исходящей на порт 26) |
-| Mail Proxy → Options → Verify Receivers | как сейчас, через LDAP Zimbra |
+| Mail Proxy → Options → Verify Receivers | через LDAP Zimbra; 450 на время переезда, затем 550 |
 | Mail Proxy → DKIM | подпись для всех четырёх доменов, ключи → TXT в DNS |
 | Certificates → ACME | сертификат для SMTP на каждом узле |
 
 Обучение Bayes на PMG из пометок Junk/Not Junk в Zimbra — отдельным workflow в n8n.
+
+**Маршрутизация входящей почты.** Relay Domains только разрешают приём для доменов; куда передавать почту, задают Default Relay и вкладка Transports. Для домена из Transports действует его запись, Default Relay — для остальных доменов из Relay Domains. При пустых обоих PMG доставляет по MX домена из своего DNS — схема зависит от внутреннего DNS, при переезде о ней легко забыть. Поэтому адрес Zimbra задаётся явно в одном месте: Default Relay = mail-new.example.com, порт 25, Disable MX lookup = Yes; в Transports — только исключения.
+
+```bash
+# на PMG: куда реально уходит почта и что в таблице транспортов
+grep 'status=sent' /var/log/mail.log | grep -v '127.0.0.1' | tail -5 | grep -o 'relay=[^ ]*'
+postconf -h transport_maps relayhost
+cat /etc/pmg/transport
+```
+
+**Mail Proxy → Options** — принятые значения:
+
+| Параметр | Значение | Почему |
+| --- | --- | --- |
+| Message Size (bytes) | 104857600 | 100 МБ, как `zimbraMtaMaxMessageSize` (раздел 0.8). Если у Zimbra лимит больше, исходящее письмо примет Zimbra, а отвергнет PMG |
+| Reject Unknown Clients | Yes | отправители без корректной обратной DNS-записи; отказ временный (450), при сбое DNS отправитель повторит. Отвергнутых проверять командой ниже, нужных добавлять в Welcomelist |
+| Reject Unknown Senders, SMTP HELO checks, Use SPF | Yes | — |
+| Verify Receivers | Yes (450) на время переезда, после — 550 | 450 — временный отказ: если на проверяемом сервере учётки ещё нет, письмо дождётся. 550 — окончательный: отправитель с опечаткой узнаёт сразу. При недоступности проверки отказ временный при любом значении |
+| Greylisting IPv4 /24, IPv6 /64 | Yes | первое письмо от нового отправителя задерживается на несколько минут |
+| Client Connection Count / Rate / Message Rate | 10 / 10 / 5 | лимиты для внешних отправителей. Адреса Zimbra (старого и нового) обязательно во вкладке Networks: доверенные сети этими лимитами не ограничиваются |
+| Accept Broken MIME Structure | No, если нет отправителей, которым это нужно | письма с повреждённой MIME-структурой — способ спрятать вложение от проверки |
+| Before Queue Filtering | Yes | отказ в ходе SMTP-сессии, без отражённого спама |
+| DNSBL Threshold / Sites | 2 / zen.spamhaus.org, b.barracudacentral.org, bl.spamcop.net, Abusix | отказ при попадании минимум в два списка. Ключ Abusix входит в имя зоны — снимки экрана с ним не публиковать |
+
+```bash
+# на PMG: DNSBL отвечают (Spamhaus не работает через публичные резолверы, Barracuda — без регистрации DNS-сервера)
+dig +short 2.0.0.127.zen.spamhaus.org          # 127.0.0.2, .4, .10; 127.255.255.25x — запросы блокируются
+dig +short 2.0.0.127.b.barracudacentral.org    # 127.0.0.2
+dig +short 2.0.0.127.bl.spamcop.net            # 127.0.0.2
+# кого отвергла проверка обратной DNS-записи
+grep 'cannot find your hostname\|cannot find your reverse hostname' /var/log/mail.log \
+  | grep -o 'from [^ ]*\[[0-9.]*\]' | sort | uniq -c | sort -rn | head
+```
+
+**Обновление PMG.** Настройки из веб-интерфейса хранятся в `/etc/pmg/` и базе PMG; конфиги Postfix, ClamAV, SpamAssassin PMG генерирует из шаблонов, поэтому dpkg при обновлении считает их изменёнными. На вопрос dpkg о таких файлах — **N** (оставить текущий; проверить клавишей D: в разнице видны ваши домены и адреса), после обновления — `pmgconfig sync --restart 1`. Для файлов, к которым PMG отношения не имеет (`sshd_config`, `grub`): не правили — **Y**, правили — **N**. Свои изменения конфигов — только копией шаблона в `/etc/pmg/templates/` ([документация PMG](https://pmg.proxmox.com/pmg-docs/pmgconfig.1.html)); обновление не сообщает об изменениях базовых шаблонов, поэтому:
+
+```bash
+cp -a /var/lib/pmg/templates /root/pmg-templates-$(date +%F)     # перед обновлением
+apt update && apt dist-upgrade
+for f in /etc/pmg/templates/*; do                                 # после: что поменялось в базовых шаблонах
+  diff -u /root/pmg-templates-$(date +%F)/$(basename "$f") /var/lib/pmg/templates/$(basename "$f")
+done
+pmgconfig sync --restart 1
+```
+
+Узлы обновляются по одному, с проверкой очереди между ними. Переход между старшими версиями — по отдельной инструкции Proxmox для этого перехода.
 
 ## 4. SSL-сертификаты (Let's Encrypt, автопродление)
 
