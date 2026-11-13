@@ -774,7 +774,7 @@ sa-learn --dump magic | grep -E 'nspam|nham'              # Bayes: ≥ 200 ка�
 | User Spamreport Style | Verbose | список писем с отправителем, темой и кнопками «доставить» и «удалить» |
 | Quarantine Host / port | mxs.example.com / 8006 | 8006 — это и интерфейс администратора PMG: наружу не открывать; доступ из офиса или VPN, либо обратный прокси только для `/quarantine` |
 | EMail 'From:' | antispam@example.com | домен подписывается DKIM PMG; для ответов — алиас или список рассылки на администраторов в Zimbra |
-| View images | Show embedded images only | внешние картинки в карантине подтверждают спамеру, что адрес живой |
+| View images | Load external images on demand | вложенные картинки показываются, внешние — только по кнопке: иначе они подтверждают спамеру, что адрес живой |
 | Allow HREFs | No | в карантине спам и фишинг — ссылки в предпросмотре не должны быть кликабельными |
 
 ```bash
