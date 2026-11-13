@@ -607,12 +607,16 @@ def data_migrate(cfg, old, new, exclude, only, dry, workdir, types, since, worke
                 " — всё заново" if force else "")
     log(f"\n=== {title}" + ("" if reindex_only else f": {', '.join(vname[v] for v in views)}"
                                                   + ("" if "message" in views else " (БЕЗ ПОЧТЫ)")) + mode)
-    log(f"  ящиков: {len(accounts)}; потоков: {workers}"
-        + ("" if reindex_only else f"; источник: {S_old.base}; приёмник: {S_new.base}"))
+    total_old = len(accounts) + len(missing)
+    log(f"  ящиков: {len(accounts)}" + (f" из {total_old} (нет на новом сервере: {len(missing)})" if missing else "")
+        + f"; потоков: {workers}")
+    if not reindex_only:
+        log(f"  источник: {S_old.base}\n  приёмник: {S_new.base}")
     if missing:
-        log(f"  ! нет на новом сервере, пропущены ({len(missing)}): {', '.join(missing[:5])}"
-            + (f" и ещё {len(missing) - 5} — список в журнале" if len(missing) > 5 else ""))
+        log(f"  ! пропущены — нет на новом сервере: {', '.join(missing[:5])}"
+            + (f" и ещё {len(missing) - 5} (полный список в журнале)" if len(missing) > 5 else ""))
         log_file("    все пропущенные: " + ", ".join(missing))
+    log("")
     if not verify_only and not reindex_only:
         if diff_only and not (force or sync or since):
             log("  ! --diff-only без --force: в ящиках, куда данные уже переносились, они пропускаются. "
@@ -637,6 +641,7 @@ def data_migrate(cfg, old, new, exclude, only, dry, workdir, types, since, worke
     if not reindex_only:
         log("  Обозначения: «почта 120 ✓» — на новом столько же, сколько на старом; "
             "«почта 118≠120 ✗» — на новом 118, на старом 120; «(+5)» — добавлено этим запуском")
+        log("")
 
     def export_url(name, types_, after=None, before=None):
         q = {"fmt": "tgz", "types": types_}
