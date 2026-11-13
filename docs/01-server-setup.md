@@ -161,6 +161,52 @@ zmproxyctl restart
 | Глобальные значения | `zmprov gacf \| grep -E 'zimbraReverseProxyMailMode\|zimbraMailProxyPort\|zimbraMailPort'` | `redirect`, порт прокси `0`, порт mailboxd `80` |
 | Перенаправление | `curl -sI http://mail-new.example.com/ \| grep -iE '^HTTP\|^Location'` | `301`, `Location: https://mail-new.example.com/` |
 
+### 0.6. Обновления антивируса и антиспама
+
+Базы ClamAV Zimbra обновляет сама (freshclam в составе службы antivirus), с периодичностью `zimbraVirusDefinitionsUpdateFrequency`. Обновление правил SpamAssassin (sa-update) включается параметрами localconfig `antispam_enable_rule_updates` и `antispam_enable_restarts`; по [статье Zextras](https://community.zextras.com/spamassassin/) их умолчание — `false`, поэтому значения проверяются на каждом сервере. Обоим нужен исходящий доступ в интернет: ClamAV — `database.clamav.net` (HTTPS), SpamAssassin — DNS-запросы к `updates.spamassassin.org` и HTTPS к его зеркалам.
+
+```bash
+# от zimbra — текущие значения
+zmprov gs $(zmhostname) zimbraVirusDefinitionsUpdateFrequency
+zmlocalconfig antispam_enable_rule_updates antispam_enable_restarts antispam_enable_rule_compilation
+crontab -l | grep -E 'zmsaupdate|zmtrainsa'
+
+# включить обновление правил SpamAssassin, если false
+zmlocalconfig -e antispam_enable_rule_updates=true antispam_enable_restarts=true
+zmamavisdctl restart && zmmtactl restart
+```
+
+| Проверка | Команда | Ожидаемый результат |
+| --- | --- | --- |
+| freshclam работает | `ps -o pid,args -u zimbra \| grep [f]reshclam` | процесс freshclam |
+| Базы ClamAV обновляются | `tail -n 20 /opt/zimbra/log/freshclam.log` | строки `daily.cld … updated` или `is up to date` с сегодняшней датой, без `Can't connect` |
+| Правила SpamAssassin обновляются | `grep -i sa-update /var/log/zimbra.log \| tail -5` (после ночного запуска) | записи об обновлении без ошибок загрузки |
+
+### 0.7. imapsync (резервный инструмент)
+
+Основной перенос выполняет скрипт `zm-ldap-migrate.py`; imapsync держим на сервере для разовых задач: забрать ящик с чужого IMAP-сервера, сравнить папки двух ящиков. В репозиториях Ubuntu 24.04 его нет, ставится по официальной инструкции [INSTALL.Ubuntu](https://imapsync.lamiral.info/INSTALL.d/INSTALL.Ubuntu.txt) (v1.25, 12.09.2025):
+
+```bash
+sudo apt -y install libauthen-ntlm-perl libclass-load-perl libcrypt-openssl-rsa-perl libcrypt-ssleay-perl \
+  libdata-uniqid-perl libdigest-hmac-perl libdist-checkconflicts-perl libencode-imaputf7-perl \
+  libfile-copy-recursive-perl libfile-tail-perl libio-compress-perl libio-socket-inet6-perl \
+  libio-socket-ssl-perl libio-tee-perl libjson-webtoken-perl libmail-imapclient-perl \
+  libmodule-scandeps-perl libnet-dbus-perl libnet-dns-perl libnet-ssleay-perl libpar-packer-perl \
+  libproc-processtable-perl libreadonly-perl libregexp-common-perl libsys-meminfo-perl \
+  libterm-readkey-perl libtest-fatal-perl libtest-mock-guard-perl libtest-mockobject-perl \
+  libtest-pod-perl libtest-requires-perl libtest-simple-perl libunicode-string-perl liburi-perl \
+  libtest-nowarnings-perl libtest-deep-perl libtest-warn-perl make time cpanminus
+cd /tmp && wget -N https://raw.githubusercontent.com/imapsync/imapsync/master/imapsync
+sudo install -m 755 imapsync /usr/local/bin/imapsync
+imapsync --version
+```
+
+| Проверка | Команда | Ожидаемый результат |
+| --- | --- | --- |
+| Зависимости | `imapsync` без параметров | справка и пример запуска, без строк `Can't locate … .pm` |
+
+Если imapsync запускается с машины вне 10.0.0.0/16, её адрес добавить в `ignoreip` fail2ban на обоих серверах: ошибки входа при отладке иначе приведут к бану.
+
 ### Проверка раздела 0
 
 | Проверка | Команда | Ожидаемый результат |
