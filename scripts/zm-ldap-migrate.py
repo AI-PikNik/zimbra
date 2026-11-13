@@ -775,7 +775,7 @@ def data_migrate(cfg, old, new, exclude, only, dry, workdir, types, since, worke
 
     # ---- прогресс
     progress, prog_lock = {}, threading.Lock()
-    stats = {"done": 0, "done_bytes": 0}
+    stats = {"done": 0, "done_bytes": 0, "xfer": 0}
 
     def set_prog(name, text):
         with prog_lock:
@@ -901,6 +901,8 @@ def data_migrate(cfg, old, new, exclude, only, dry, workdir, types, since, worke
             if err:
                 return "ОШИБКА", err, total + size
             total += size
+            with prog_lock:
+                stats["xfer"] += size
             parts_done += 1
         return ("OK" if parts_done else "НЕТ НОВЫХ"), "", total
 
@@ -1058,9 +1060,13 @@ def data_migrate(cfg, old, new, exclude, only, dry, workdir, types, since, worke
                 continue
             el = time.time() - t_start
             head = f"  … {hms(el)} | готово {stats['done']}/{len(accounts)}"
+            if stats["xfer"]:
+                head += f" | передано {human(stats['xfer'])}, {human(stats['xfer'] / el * 3600)}/ч"
             if total_bytes and stats["done_bytes"]:
                 frac = stats["done_bytes"] / total_bytes
-                head += f" ({frac * 100:.0f}% объёма), осталось ~{hms(el / frac - el)}"
+                # оценка по первым ящикам неточна — показываем после 3% объёма и 10 минут работы
+                head += f" | {frac * 100:.0f}% объёма" + (f", осталось ~{hms(el / frac - el)}"
+                                                         if frac >= 0.03 and el >= 600 else "")
             with out_lock:
                 log(head + " | в работе: " + " · ".join(f"{n.split('@')[0]} {t}" for n, t in items))
 
