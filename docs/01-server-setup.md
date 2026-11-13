@@ -801,6 +801,8 @@ nc -vz -w5 <внешний IP PMG> 8006
 journalctl -u clamav-freshclam --since today --no-pager | tail -20
 ```
 
+**Virus Detector → Quarantine** (видят только администраторы): Lifetime 14 дней (30 — если блокируются зашифрованные вложения и сюда попадают документы банков), View images = Load external images on demand, Allow HREFs = No.
+
 **Mail Proxy → DKIM.** Один ключ и один селектор на все домены; на второй узел кластера синхронизируется с master. Порядок важен: сначала DNS, потом включение подписи — иначе получатели не найдут ключ, а при строгом DMARC почту начнут отклонять.
 
 | Параметр | Значение | Почему |
