@@ -44,7 +44,8 @@ sudo apt update && sudo apt -y full-upgrade
 
 sudo apt -y install cron rsyslog logrotate \
   wget curl netcat-openbsd sudo libidn12 libpcre3 libgmp10 libexpat1 libstdc++6 \
-  libperl5.38 libaio1t64 unzip pax sysstat sqlite3 dnsutils
+  libperl5.38 libaio1t64 unzip pax sysstat sqlite3 dnsutils \
+  less nano htop traceroute telnet
 sudo systemctl enable --now cron rsyslog
 
 # конфликтующие MTA и веб-серверы
@@ -66,6 +67,7 @@ sudo apt -y purge postfix exim4* sendmail* apache2* nginx* 2>/dev/null || true
 | unzip, pax | развёртывание зимлетов, служебные скрипты |
 | sysstat | `iostat` для графиков нагрузки в админке |
 | sqlite3 | входит в список обязательных пакетов инсталлятора |
+| less, nano, htop, traceroute, telnet | утилиты администратора: просмотр журналов (less), правка конфигов (nano), нагрузка по процессам (htop), трассировка маршрута до PMG и внешних узлов (traceroute), ручная проверка портов и диалога SMTP, POP3, IMAP (telnet). В минимальном образе отсутствуют; самой Zimbra не нужны |
 
 В минимальном образе также отсутствуют документация и man-страницы. Поэтому `dpkg -V <пакет>` показывает строки `missing /usr/share/doc/...` — это нормально и на работу не влияет.
 
