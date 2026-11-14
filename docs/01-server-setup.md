@@ -984,6 +984,18 @@ sudo systemctl daemon-reload && sudo systemctl restart certbot.timer
 sudo certbot renew --dry-run
 ```
 
+Правка в `systemctl edit` сохраняется, только если блок вставлен **выше** строки `### Edits below this comment will be discarded`. Надёжнее создать файл напрямую:
+
+```bash
+sudo mkdir -p /etc/systemd/system/certbot.timer.d
+printf '[Timer]\nOnCalendar=\nOnCalendar=*-*-* 03:30:00\nRandomizedDelaySec=15m\n' | sudo tee /etc/systemd/system/certbot.timer.d/override.conf
+sudo systemctl daemon-reload && sudo systemctl restart certbot.timer
+systemctl cat certbot.timer | tail -5        # блок override.conf
+systemctl list-timers certbot.timer          # NEXT — 03:30–03:45
+```
+
+`Hook 'pre-hook' ran with error output` в выводе `--dry-run` — не ошибка: certbot так помечает любой вывод хука в stderr; итог — `all simulated renewals succeeded`.
+
 ### Шаг 4. Проверка
 
 ```bash
