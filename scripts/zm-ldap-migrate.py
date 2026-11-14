@@ -1412,8 +1412,13 @@ def main():
         parts.append("данные ящиков")
     if args.reindex:
         parts.append("переиндексация")
-    how = "СВЕРКА (без изменений)" if args.verify else "ПЛАН (без изменений)" if dry else "ПЕРЕНОС"
-    log(f"Режим: {how}: {', '.join(parts)}; рабочий каталог: {workdir}")
+    if args.verify or dry:
+        how = "СВЕРКА (без изменений)" if args.verify else "ПЛАН (без изменений)"
+        log(f"Режим: {how}: {', '.join(parts)}; рабочий каталог: {workdir}")
+    elif args.reindex and not (do_ldap or do_data):
+        log(f"Режим: ПЕРЕИНДЕКСАЦИЯ (данные не переносятся); рабочий каталог: {workdir}")
+    else:
+        log(f"Режим: ПЕРЕНОС: {', '.join(parts)}; рабочий каталог: {workdir}")
     old = Ldap(o["ldap_url"], o["bind_dn"], o["bind_pw"], o.getboolean("starttls", True), workdir, "old")
     new = Ldap(zmlocal("ldap_master_url").split()[0], zmlocal("zimbra_ldap_userdn"),
                zmlocal("zimbra_ldap_password"), zmlocal("ldap_starttls_supported") == "1", workdir, "new")
