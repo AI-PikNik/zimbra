@@ -709,7 +709,7 @@ zmcontrol restart
 | Mail Proxy → Networks | IP Zimbra (для приёма исходящей на порт 26) |
 | Mail Proxy → Options → Verify Receivers | пробный SMTP-запрос к Zimbra (не LDAP); 450 на время переезда, затем 550 |
 | Mail Proxy → DKIM | один селектор `pmg2026` (2048) на все домены, TXT в DNS каждого домена — порядок ниже |
-| Certificates → ACME | сертификат для SMTP на каждом узле |
+| Certificates → ACME | Let's Encrypt, HTTP-01; на каждом узле свой домен для SMTP и API — подробнее ниже |
 
 Обучение Bayes на PMG из пометок Junk/Not Junk в Zimbra — отдельным workflow в n8n.
 
@@ -839,6 +839,31 @@ grep 'cannot find your hostname\|cannot find your reverse hostname' /var/log/mai
   | grep -o 'from [^ ]*\[[0-9.]*\]' | sort | uniq -c | sort -rn | head
 ```
 
+**Certificates (ACME).** Let's Encrypt, проверка HTTP-01 встроенным плагином standalone: PMG на время проверки сам поднимает веб-сервер на порту 80. Аккаунт ACME общий для кластера, домены и сертификаты — у каждого узла свои: `mx1.example.com` на mx1, `mx2.example.com` на mx2. У каждого узла два сертификата, домен добавляется для обоих назначений:
+
+| Назначение | Файл | Для чего |
+| --- | --- | --- |
+| SMTP | `/etc/pmg/pmg-tls.pem` | STARTTLS на порту 25; после выпуска PMG сам перезагружает Postfix |
+| API | `/etc/pmg/pmg-api.pem` | веб-интерфейс и API (8006), в том числе ссылки из отчётов карантина |
+
+Выпущены 14.11.2026: SMTP на обоих узлах. Продление — `pmg-daily.service`, когда до окончания срока меньше 30 дней. Поэтому проброс TCP 80 на каждый узел и записи `mx1`/`mx2` в публичном DNS должны оставаться постоянно: без них продление через 60 дней не пройдёт. Первый выпуск лучше делать на аккаунте Let's Encrypt Staging — у боевого лимиты на число выпусков.
+
+```bash
+# на каждом узле: издатель и срок обоих сертификатов
+for p in 25 8006; do
+  s=$([ $p = 25 ] && echo '-starttls smtp')
+  echo "== $p"; openssl s_client $s -connect $(hostname -f):$p -servername $(hostname -f) </dev/null 2>/dev/null \
+    | openssl x509 -noout -subject -issuer -enddate
+done
+systemctl list-timers pmg-daily.timer
+```
+
+| Проверка | Ожидаемый результат |
+| --- | --- |
+| порт 25 и 8006 | `issuer` — Let's Encrypt (`R10`–`R14` или `E5`–`E9`), `subject` — имя узла, срок около 90 дней |
+| `pmg-daily.timer` | следующий запуск в ближайшие сутки |
+| снаружи: `swaks --server mx1.example.com --tls --quit-after EHLO` | `TLS started` без ошибок сертификата |
+
 **Обновление PMG.** Настройки из веб-интерфейса хранятся в `/etc/pmg/` и базе PMG; конфиги Postfix, ClamAV, SpamAssassin PMG генерирует из шаблонов, поэтому dpkg при обновлении считает их изменёнными. На вопрос dpkg о таких файлах — **N** (оставить текущий; проверить клавишей D: в разнице видны ваши домены и адреса), после обновления — `pmgconfig sync --restart 1`. Для файлов, к которым PMG отношения не имеет (`sshd_config`, `grub`): не правили — **Y**, правили — **N**. Свои изменения конфигов — только копией шаблона в `/etc/pmg/templates/` ([документация PMG](https://pmg.proxmox.com/pmg-docs/pmgconfig.1.html)); обновление не сообщает об изменениях базовых шаблонов, поэтому:
 
 ```bash
@@ -925,7 +950,7 @@ openssl s_client -connect mail.example.org:587 -starttls smtp </dev/null 2>/dev/
 openssl s_client -connect mail.example.net:993 </dev/null 2>/dev/null | openssl x509 -noout -ext subjectAltName -enddate
 ```
 
-PMG: сертификат для SMTP выпускается встроенным ACME (Configuration → Certificates) на каждом узле. Срок действия всех сертификатов стоит проверять из n8n с алертом за 14 дней.
+PMG: сертификаты для SMTP и веб-интерфейса выпускает встроенный ACME на каждом узле (раздел 3, Certificates). Срок действия всех сертификатов стоит проверять из n8n с алертом за 14 дней.
 
 ### Wildcard
 
