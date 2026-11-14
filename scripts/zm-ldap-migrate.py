@@ -460,7 +460,9 @@ class ZServer:
         out = []
 
         def walk(f, path):
-            p = f"{path}/{f.get('name', '')}" if f.get("id") != "1" else ""
+            # корень ящика: id "1" (или "<zimbraId>:1"), имя USER_ROOT — в путь не входит
+            root = str(f.get("id", "")).split(":")[-1] == "1" or f.get("name") == "USER_ROOT"
+            p = "" if root else f"{path}/{f.get('name', '')}"
             out.append((f.get("id"), p or "/", f.get("view", "message"), int(f.get("n", 0))))
             for sub in f.get("folder", []):
                 walk(sub, p)
@@ -479,7 +481,7 @@ class ZServer:
         """Очистить на этом сервере папки указанных видов (кроме корзины). Возвращает число удалённых элементов."""
         removed = 0
         for fid, path, view, n in self.folders(name):
-            if view in views and fid not in ("1", TRASH_ID) and n:
+            if view in views and str(fid).split(":")[-1] not in ("1", TRASH_ID) and n:
                 self.mail(name, {"FolderActionRequest": {"_jsns": "urn:zimbraMail",
                                                          "action": {"op": "empty", "id": fid, "recursive": False}}})
                 removed += n
