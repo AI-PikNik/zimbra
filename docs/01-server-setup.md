@@ -723,7 +723,7 @@ zmcontrol restart
 | Mail Proxy → Relay Domains | example.com, example.net, example.org, shop.example, news.example, intl.example |
 | Mail Proxy → Networks | IP Zimbra (для приёма исходящей на порт 26) |
 | Mail Proxy → Options → Verify Receivers | пробный SMTP-запрос к Zimbra (не LDAP); 450 на время переезда, затем 550 |
-| Mail Proxy → DKIM | один селектор `pmg2026` (2048) на все домены, TXT в DNS каждого домена — порядок ниже |
+| Mail Proxy → DKIM | один селектор `mpg-key` (2048) на все домены, TXT в DNS каждого домена — порядок ниже |
 | Certificates → ACME | Let's Encrypt, HTTP-01; на каждом узле свой домен для SMTP и API — подробнее ниже |
 
 Обучение Bayes на PMG из пометок Junk/Not Junk в Zimbra — отдельным workflow в n8n.
@@ -822,7 +822,7 @@ journalctl -u clamav-freshclam --since today --no-pager | tail -20
 
 | Параметр | Значение | Почему |
 | --- | --- | --- |
-| Selector | `pmg2026` | год в имени — для замены ключа: следующий `pmg2027`, старый и новый временно публикуются вместе |
+| Selector | `mpg-key` (действующий, DNS-запись опубликована) | при замене ключа — новый селектор; старый и новый временно публикуются вместе, старый убирается после перехода |
 | Key Size | 2048 | 1024 слабый; 4096 и 8192 дают TXT в несколько КБ, часть DNS-панелей их не примет |
 | Signing Domain Source | Header | подпись по домену из `From:` — его проверяет DMARC |
 | Sign all Outgoing Mail | No | подписываются только домены из Sign Domains; иначе PMG подпишет и чужие домены (пересылку), для которых ключа в DNS нет |
@@ -830,9 +830,9 @@ journalctl -u clamav-freshclam --since today --no-pager | tail -20
 | Enable DKIM Signing | Yes — последним шагом | после публикации и проверки DNS |
 
 1. Проверить текущее состояние: `dig +short TXT _dmarc.<домен>`, `dig +short TXT <домен> | grep spf`; в письме, отправленном наружу, — заголовок `DKIM-Signature:` (`d=` домен, `s=` селектор). Если старый Zimbra подписывает сам, после переезда подписывает только PMG, DKIM на новом Zimbra не включается.
-2. Создать селектор (`pmg2026`, 2048), Overwrite existing file = No.
-3. View DNS Record → опубликовать TXT `pmg2026._domainkey.<домен>` для каждого домена (ключ у всех один). Разбиение длинной записи на части по 255 символов — норма.
-4. Проверить снаружи для каждого домена: `dig +short TXT pmg2026._domainkey.<домен>` → `v=DKIM1; k=rsa; p=…` с ключом из PMG.
+2. Создать селектор (`mpg-key`, 2048), Overwrite existing file = No.
+3. View DNS Record → опубликовать TXT `mpg-key._domainkey.<домен>` для каждого домена (ключ у всех один). Разбиение длинной записи на части по 255 символов — норма.
+4. Проверить снаружи для каждого домена: `dig +short TXT mpg-key._domainkey.<домен>` → `v=DKIM1; k=rsa; p=…` с ключом из PMG.
 5. Добавить Sign Domains, затем Enable DKIM Signing = Yes, Signing Domain Source = Header, Sign all Outgoing Mail = No.
 6. Письмо из Zimbra на ящик Gmail → «Показать оригинал»: `DKIM: PASS` с вашим доменом; повторить для одного-двух второстепенных доменов.
 
@@ -840,7 +840,7 @@ SPF всех доменов должен включать внешние адр�
 
 | Проверка | Команда | Ожидаемый результат |
 | --- | --- | --- |
-| Ключ в DNS | `dig +short TXT pmg2026._domainkey.example.com` | `v=DKIM1; k=rsa; p=…`, совпадает с View DNS Record |
+| Ключ в DNS | `dig +short TXT mpg-key._domainkey.example.com` | `v=DKIM1; k=rsa; p=…`, совпадает с View DNS Record |
 | Подпись | письмо на Gmail → «Показать оригинал» | `DKIM: PASS`, `d=<ваш домен>` |
 | SPF и DMARC | там же | `SPF: PASS`, `DMARC: PASS` |
 
