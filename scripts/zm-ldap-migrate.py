@@ -1208,23 +1208,28 @@ def data_migrate(cfg, old, new, exclude, only, dry, workdir, types, since, worke
         log(f"  {vname[v]:<12}{so:>12}{sn:>12}" + ("" if verify_only else f"{sa:>12}") + f"{nd:>12}")
     diffs = sorted(x["name"] for x in results if x["diff"] and x["status"] != "ОШИБКА")
     if diffs:
-        cats = {"empty": [], "less": [], "more": []}
+        cats = {"empty": [], "less": [], "more_mail": [], "more": []}
         for x in sorted(results, key=lambda x: x["name"]):
             if not x["diff"] or x["status"] == "ОШИБКА":
                 continue
-            rows = [(o_, a_) for _, o_, _, a_ in x["rows"] if o_ is not None and a_ is not None]
-            if rows and all(a_ == 0 for _, a_ in rows):
+            rows = [(v_, o_, a_) for v_, o_, _, a_ in x["rows"] if o_ is not None and a_ is not None]
+            if rows and all(a_ == 0 for _, _, a_ in rows):
                 cats["empty"].append(x["name"])
-            if any(0 < a_ < o_ for o_, a_ in rows):
+            if any(0 < a_ < o_ for _, o_, a_ in rows):
                 cats["less"].append(x["name"])
-            if any(a_ > o_ for o_, a_ in rows):
+            if any(a_ > o_ for v_, o_, a_ in rows if v_ == "message"):
+                cats["more_mail"].append(x["name"])
+            if any(a_ > o_ for v_, o_, a_ in rows if v_ != "message"):
                 cats["more"].append(x["name"])
         log(f"\n  ✗ Расхождения в {len(diffs)} ящиках (по каждому — в data-report.csv):")
         hints = {
             "empty": ("на новом пусто — данные ещё не переносились", "запустить: --data"),
             "less": ("на новом меньше, чем на старом", "добрать новое: --data --sync; "
                      "если разница большая — перенести заново: --data --force --diff-only"),
-            "more": ("на новом больше, чем на старом (обычно дубли контактов или календарей)",
+            "more_mail": ("почты на новом больше, чем на старом",
+                          "обычно это письма, удалённые пользователями на старом после переноса: перенос писем "
+                          "не удаляет. Не ошибка, повторный перенос это не изменит"),
+            "more": ("контактов, задач, календарей или файлов на новом больше, чем на старом",
                      "перенести заново: --data --force --diff-only"),
         }
         for k, names in cats.items():
