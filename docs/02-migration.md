@@ -290,4 +290,6 @@ python3 zm-ldap-migrate.py -c migrate.conf --data --types message --force --yes 
 - [ ] PMG Default Relay → новый сервер; очередь старого пуста
 - [ ] Финальный `--data --types message --sync --reindex`
 - [ ] DNS → новый сервер, сертификаты выпущены
+- [ ] Старый PMG выключен; на новом проверены greylisting и Verify Receivers: один и тот же несуществующий адрес дважды с интервалом 5 минут (`swaks --server mx1.example.com --from test@outlook.com --to nosuchuser-test1@example.com --quit-after RCPT`) — сначала `450 4.7.1 … Service is unavailable` (greylisting), затем `450 4.1.1 … User unknown`; тест с хоста, которого нет в Mail Proxy → Networks
+- [ ] Решено по VRFY на PMG (`disable_vrfy_command = yes` через шаблон `main.cf.in`)
 - [ ] На старом закрыты 25/465/587; сервер хранится 2–4 недели на случай отката
