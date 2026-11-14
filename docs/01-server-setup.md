@@ -900,8 +900,20 @@ pmgconfig sync --restart 1
 | mail.example.net | клиенты example.net |
 | mail.example.org | клиенты example.org |
 | mail.shop.example | клиенты shop.example |
+| mail.news.example | клиенты news.example |
+| mail.intl.example | клиенты intl.example |
 
-Для проверки HTTP-01 каждое имя должно иметь публичную A-запись на внешний IP Zimbra, порт 80 открыт снаружи. Если у доменов есть CAA-записи, в них нужно разрешение letsencrypt.org.
+Для проверки HTTP-01 каждое имя должно иметь публичную A-запись на внешний IP Zimbra, порт 80 открыт снаружи. Если у доменов есть CAA-записи, в них нужно разрешение letsencrypt.org. Имя, которое не разрешается или ведёт на другой IP, срывает выпуск целиком.
+
+**Выпуск до переключения.** Пока `mail.*` ведут на старый сервер, на периметровом файрволе переносится на новый сервер **только TCP 80**. На порту 80 Zimbra в режиме redirect лишь отправляет браузер на `https://` с тем же именем, а 443 по-прежнему ведёт на старый сервер, поэтому пользователи разницы не заметят. Остальные порты переносятся при переключении. Если старый сервер продлевает сертификат через HTTP-01, на это время его продление не пройдёт.
+
+```bash
+for n in mail-new.example.com mail.example.com mail.example.net mail.example.org mail.shop.example mail.news.example mail.intl.example; do
+  printf '%-26s %s\n' $n "$(dig +short @1.1.1.1 A $n | xargs)"      # все — внешний IP Zimbra
+done
+curl -sI http://mail.example.org/ | grep -iE '^(HTTP|Location)'           # снаружи: 301/302 на https://mail.example.org/
+sudo tail -f /opt/zimbra/log/nginx.access.log                       # на новом: строка от этого curl — порт 80 пришёл сюда
+```
 
 ### Шаг 1. Виртуальные имена доменов
 
@@ -921,16 +933,19 @@ done
 ### Шаг 2. Certbot и certbot-zimbra
 
 ```bash
-sudo apt -y install certbot
-cd /tmp
-# последний релиз: https://github.com/YetOpen/certbot-zimbra/releases
-tar xzf certbot-zimbra-*.tar.gz && cd certbot-zimbra-*/
-sudo ./install all
+sudo apt -y install certbot          # Ubuntu 24.04: Certbot 2.x; certbot-zimbra сам задаёт RSA-ключ (ECDSA Zimbra не поддерживает)
+cd /tmp && wget https://github.com/YetOpen/certbot-zimbra/archive/refs/tags/1.0.2.tar.gz -O certbot-zimbra-1.0.2.tar.gz
+tar xzf certbot-zimbra-1.0.2.tar.gz && cd certbot-zimbra-1.0.2 && sudo ./install all
+certbot_zimbra.sh --version
 
+# выпуск — не во время переноса данных: в конце перезапускается Zimbra
 sudo certbot_zimbra.sh --new --prompt-confirm \
   -H mail-new.example.com \
-  -e mail.example.com -e mail.example.net -e mail.example.org -e mail.shop.example
+  -e mail.example.com -e mail.example.net -e mail.example.org \
+  -e mail.shop.example -e mail.news.example -e mail.intl.example
 ```
+
+certbot-zimbra 1.0.2 (июнь 2023) — последний релиз; с Zimbra 10.1 авторы его не проверяли, поэтому `--prompt-confirm`: подтверждение перед правкой nginx, запуском certbot, развёртыванием и перезапуском Zimbra. E-mail для certbot — общий ящик IT: туда придёт предупреждение, если продление не пройдёт. Сообщение установщика `mandb: command not found` безвредно: в минимальной Ubuntu нет `man-db`, справка доступна через `certbot_zimbra.sh --help`.
 
 Скрипт патчит nginx Zimbra под проверку ACME, получает сертификат, разворачивает его через zmcertmgr и прописывает себя хуками продления. Новый домен: добавить ещё один -e и перевыпустить с --force-renewal.
 
