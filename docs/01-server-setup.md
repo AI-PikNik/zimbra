@@ -191,6 +191,15 @@ chown -R zimbra:zimbra /opt/zimbra/data/spamassassin/state /opt/zimbra/data/spam
 find /opt/zimbra/data/spamassassin ! -user zimbra    # пусто
 ```
 
+**Домен amavis.** После установки `av_notify_domain` пустой: в исходящих письмах заголовок `X-Virus-Scanned: amavis at ` без домена, служебные уведомления amavis без адреса.
+
+```bash
+# от zimbra
+zmlocalconfig -e av_notify_domain=example.com
+zmamavisdctl restart; sleep 20; zmcontrol status | grep -i amavis      # Running
+grep -nE '^\$mydomain' /opt/zimbra/conf/amavisd.conf                    # 'example.com'
+```
+
 | Проверка | Команда | Ожидаемый результат |
 | --- | --- | --- |
 | freshclam работает | `ps -o pid,args -u zimbra \| grep [f]reshclam` | процесс freshclam |
