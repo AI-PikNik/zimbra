@@ -412,12 +412,15 @@ _smtpd = postfix/(?:submission/|smtps/)?smtpd\[\d+\]:
 _sub   = postfix/(?:submission|smtps)/smtpd\[\d+\]:
 
 failregex = %(_smtpd)s warning: [-._\w]+\[<ADDR>\]: SASL [A-Z\d-]+ authentication failed(?::.*)?$
+            %(_smtpd)s disconnect from [-._\w]+\[<ADDR>\]\s.*\bauth=0/\d+
             %(_smtpd)s warning: non-SMTP command from [-._\w]+\[<ADDR>\]:
             %(_smtpd)s too many errors after AUTH from [-._\w]+\[<ADDR>\]
             %(_smtpd)s NOQUEUE: reject: RCPT from [-._\w]+\[<ADDR>\]:.*Relay access denied
             %(_sub)s NOQUEUE: reject: RCPT from [-._\w]+\[<ADDR>\]:.*Client host rejected: Access denied
 ignoreregex =
 ```
+
+Строка `auth=0/N` ловит ботов, которые шлют `AUTH` без `STARTTLS`: при `smtpd_tls_auth_only = yes` Zimbra отказывает до проверки пароля, поэтому строки `SASL … authentication failed` нет, есть только `disconnect … auth=0/1`. Такую же проверку использует стандартный фильтр postfix в fail2ban (режим aggressive).
 
 Отказы `Recipient address rejected`, `Sender address rejected` и `Helo command rejected` сюда намеренно не включены: на порт 25 приходит только PMG, и такие правила забанили бы его. Эти проверки — на стороне PMG.
 
