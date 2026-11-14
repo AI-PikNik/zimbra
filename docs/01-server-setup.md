@@ -259,6 +259,39 @@ zmmtactl reload
 | Лимит Postfix | `postconf -h message_size_limit` | 104857600 |
 | Веб-клиент | приложить файлы общим размером больше 60 МБ | сообщение о превышении размера |
 
+### 0.9. Предупреждение о внешних письмах
+
+С Zimbra 10.1.13 письма от внешних отправителей показываются с предупреждением над текстом (External Email Warning). Параметры: `zimbraFeatureExternalEmailWarningEnabled` и `zimbraExternalEmailWarningMessage` — глобально или по домену; `zimbraInternalSendersDomain` — **только** COS, домен или учётка: дополнительные домены, которые считаются своими (свой домен получателя внутренний и так). Без него предупреждение получают и письма между нашими доменами.
+
+```bash
+# от zimbra
+zmprov mcf zimbraFeatureExternalEmailWarningEnabled TRUE
+
+# все наши домены — внутренние, в каждом COS
+for cos in $(zmprov gac); do
+  for d in example.com example.net example.org shop.example news.example intl.example; do
+    zmprov mc "$cos" +zimbraInternalSendersDomain "$d"
+  done
+  echo "$cos: $(zmprov gc "$cos" zimbraInternalSendersDomain | grep -c '^zimbraInternal')"   # 6
+done
+```
+
+Текст — HTML (жёлтая плашка, румынский и русский). Символы вне латиницы при вставке превращаются в `?`, поэтому записываются HTML-кодами (`&#1055;` и т. п.):
+
+```bash
+zmprov mcf zimbraExternalEmailWarningMessage '<div style="background:#fff3cd;border:1px solid #e0a800;border-left:5px solid #e0a800;padding:8px 12px;color:#5c4400;font-family:Arial,sans-serif;font-size:13px;line-height:1.5"><b>&#9888; Mesajul a sosit din afara companiei.</b> Nu deschide&#539;i linkurile &#537;i ata&#537;amentele dac&#259; nu cunoa&#537;te&#539;i expeditorul.<br><b>&#9888; &#1055;&#1080;&#1089;&#1100;&#1084;&#1086; &#1087;&#1088;&#1080;&#1096;&#1083;&#1086; &#1080;&#1079; &#1074;&#1085;&#1077;&#1096;&#1085;&#1077;&#1075;&#1086; &#1080;&#1089;&#1090;&#1086;&#1095;&#1085;&#1080;&#1082;&#1072;.</b> &#1053;&#1077; &#1086;&#1090;&#1082;&#1088;&#1099;&#1074;&#1072;&#1081;&#1090;&#1077; &#1089;&#1089;&#1099;&#1083;&#1082;&#1080; &#1080; &#1074;&#1083;&#1086;&#1078;&#1077;&#1085;&#1080;&#1103;, &#1077;&#1089;&#1083;&#1080; &#1085;&#1077; &#1079;&#1085;&#1072;&#1077;&#1090;&#1077; &#1086;&#1090;&#1087;&#1088;&#1072;&#1074;&#1080;&#1090;&#1077;&#1083;&#1103;.</div>'
+
+# свой текст -> коды
+python3 -c 'import sys; print("".join(c if ord(c)<128 else "&#%d;" % ord(c) for c in sys.stdin.read().strip()))' <<< '<b>⚠ Текст</b> …'
+```
+
+Применяется к **новым** входящим письмам; уже полученные не меняются.
+
+| Проверка | Ожидаемый результат |
+| --- | --- |
+| Письмо с внешнего адреса (Gmail) | жёлтая плашка с текстом на двух языках, буквы ț, ș, ă и кириллица без `?` |
+| Письмо с example.net на example.com | без предупреждения |
+
 ### Проверка раздела 0
 
 | Проверка | Команда | Ожидаемый результат |
