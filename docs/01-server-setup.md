@@ -262,7 +262,7 @@ sudo ufw default allow outgoing
 # SSH — только из админской сети
 sudo ufw allow from 10.0.0.0/24 to any port 22 proto tcp
 
-# PMG: входящая почта (25) и LDAP для Verify Receivers (389)
+# PMG: входящая почта (25) и LDAP-профили PMG (389: вход в карантин, алиасы, правила)
 sudo ufw allow from 10.0.10.11 to any port 25,389 proto tcp
 sudo ufw allow from 10.0.10.12 to any port 25,389 proto tcp
 
@@ -287,7 +287,7 @@ sudo ufw enable
 | --- | --- | --- |
 | 22 | SSH | 10.0.0.0/24 |
 | 25 | приём почты (MTA→MTA) | PMG и внутренние сети. Клиенты на 25 не отправляют |
-| 389 | LDAP | PMG (проверка существования получателя) |
+| 389 | LDAP | PMG (LDAP-профили: вход в карантин, объединение алиасов, правила) |
 | 80, 443 | webmail, Let's Encrypt | все |
 | 465, 587 | отправка из почтовых клиентов | все |
 | 110, 995 / 143, 993 | POP3 / IMAP (без шифрования + STARTTLS / SSL) | все |
@@ -707,7 +707,7 @@ zmcontrol restart
 | Mail Proxy → Relaying → Default Relay | mail-new.example.com, порт 25, Disable MX lookup = Yes (задать при переключении) |
 | Mail Proxy → Relay Domains | example.com, example.net, example.org, shop.example, news.example, intl.example |
 | Mail Proxy → Networks | IP Zimbra (для приёма исходящей на порт 26) |
-| Mail Proxy → Options → Verify Receivers | через LDAP Zimbra; 450 на время переезда, затем 550 |
+| Mail Proxy → Options → Verify Receivers | пробный SMTP-запрос к Zimbra (не LDAP); 450 на время переезда, затем 550 |
 | Mail Proxy → DKIM | один селектор `pmg2026` (2048) на все домены, TXT в DNS каждого домена — порядок ниже |
 | Certificates → ACME | сертификат для SMTP на каждом узле |
 
@@ -729,7 +729,7 @@ cat /etc/pmg/transport
 | Message Size (bytes) | 104857600 | 100 МБ, как `zimbraMtaMaxMessageSize` (раздел 0.8). Если у Zimbra лимит больше, исходящее письмо примет Zimbra, а отвергнет PMG |
 | Reject Unknown Clients | Yes | отправители без корректной обратной DNS-записи; отказ временный (450), при сбое DNS отправитель повторит. Отвергнутых проверять командой ниже, нужных добавлять в Welcomelist |
 | Reject Unknown Senders, SMTP HELO checks, Use SPF | Yes | — |
-| Verify Receivers | Yes (450) на время переезда, после — 550 | 450 — временный отказ: если на проверяемом сервере учётки ещё нет, письмо дождётся. 550 — окончательный: отправитель с опечаткой узнаёт сразу. При недоступности проверки отказ временный при любом значении |
+| Verify Receivers | Yes (450) на время переезда, после — 550 | Postfix PMG (`reject_unverified_recipient`) проверяет адрес пробным `RCPT TO` к Default Relay, то есть к Zimbra; LDAP-профиль для этого не нужен. 450 — временный отказ: если на проверяемом сервере учётки ещё нет, письмо дождётся. 550 — окончательный: отправитель с опечаткой узнаёт сразу. При недоступности проверки отказ временный при любом значении |
 | Greylisting IPv4 /24, IPv6 /64 | Yes | первое письмо от нового отправителя задерживается на несколько минут |
 | Client Connection Count / Rate / Message Rate | 10 / 10 / 5 | лимиты для внешних отправителей. Адреса Zimbra (старого и нового) обязательно во вкладке Networks: доверенные сети этими лимитами не ограничиваются |
 | Accept Broken MIME Structure | No | письма с повреждённой MIME-структурой — способ спрятать вложение от проверки |
