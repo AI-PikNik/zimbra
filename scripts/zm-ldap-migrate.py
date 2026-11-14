@@ -845,6 +845,51 @@ def data_migrate(cfg, old, new, exclude, only, dry, workdir, types, since, worke
             time.sleep(pause)
         return err
 
+    def fix_contacts(name):
+        """Контакты, которые архивная загрузка пропустила: Zimbra (resolve=skip) сверяет номера элементов,
+        и контакт, чей номер на старом совпал с номером уже созданного на новом, не создаётся.
+        Для папки, где на новом меньше, чем на старом: выгрузка vCard со старого (номера не сверяются),
+        затем очистка папки на новом и загрузка. Возвращает (сделано, ошибка)."""
+        try:
+            of = {p: n for _, p, v, n in S_old.folders(name) if v == "contact"}
+            nf = {p: (fid, n) for fid, p, v, n in S_new.folders(name) if v == "contact"}
+        except Exception as e:
+            return [], f"контакты vCard: подсчёт папок: {e}"
+        done = []
+        for p, on in sorted(of.items()):
+            if p not in nf or nf[p][1] >= on:
+                continue
+            fid, nn = nf[p]
+            rel = urllib.parse.quote(p.lstrip("/"))
+            set_prog(name, f"контакты vCard {p}")
+            try:
+                req = urllib.request.Request(f"{S_old.base}/home/{urllib.parse.quote(name)}/{rel}?fmt=vcf",
+                                             headers={"Authorization": auth})
+                with urllib.request.urlopen(req, context=ctx, timeout=600) as resp:
+                    data = resp.read()
+            except Exception as e:
+                return done, f"контакты vCard, выгрузка {p}: {e}"
+            cards = data.count(b"BEGIN:VCARD")
+            if cards != data.count(b"END:VCARD") or cards <= nn:
+                done.append(f"{p}: vCard {cards}, на новом {nn} — оставлено как есть")
+                continue
+            try:
+                S_new.mail(name, {"FolderActionRequest": {"_jsns": "urn:zimbraMail",
+                                                          "action": {"op": "empty", "id": fid, "recursive": False}}})
+                req = urllib.request.Request(f"{S_new.base}/home/{urllib.parse.quote(name)}/{rel}?fmt=vcf",
+                                             data=data, method="POST", headers={
+                                                 "Cookie": f"ZM_ADMIN_AUTH_TOKEN={S_new.admin_token()}",
+                                                 "Content-Type": "text/x-vcard; charset=utf-8"})
+                with urllib.request.urlopen(req, context=local_ctx, timeout=600) as resp:
+                    resp.read()
+            except urllib.error.HTTPError as e:
+                return done, f"контакты vCard, загрузка {p}: HTTP {e.code} — {ZServer._fault(e.read().decode(errors='replace'))}"
+            except Exception as e:
+                return done, f"контакты vCard, загрузка {p}: {e}"
+            log_file(f"    {name}: {p} — архив загрузил {nn} из {on}, загружено через vCard: {cards}")
+            done.append(f"{p} через vCard: {cards}")
+        return done, ""
+
     def upload_part(name, path, size, tag):
         url = f"{S_new.base}/home/{urllib.parse.quote(name)}/?fmt=tgz&resolve=skip"
         err = None
@@ -980,6 +1025,12 @@ def data_migrate(cfg, old, new, exclude, only, dry, workdir, types, since, worke
             set_prog(name, "старт")
             try:
                 res["status"], res["msg"], res["size"] = transfer(name, jobs, res)
+                if res["status"] in ("OK", "НЕТ НОВЫХ") and "contact" in todo:
+                    fixed, ferr = fix_contacts(name)
+                    if fixed:
+                        res["info"] = "; ".join(x for x in (res["info"], "контакты: " + ", ".join(fixed)) if x)
+                    if ferr:
+                        res["msg"] = (res["msg"] + "; " if res["msg"] else "") + ferr
                 if reindex and res["status"] == "OK" and "message" in todo:
                     r_ = do_reindex(name)
                     if isinstance(r_, dict):
