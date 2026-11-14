@@ -535,7 +535,8 @@ def data_migrate(cfg, old, new, exclude, only, dry, workdir, types, since, worke
         except Exception as e:
             log(f"  ! SOAP старого сервера недоступен ({e}) — сверка количества со старым сервером не выполняется")
 
-    o = read_old(old, exclude, only)
+    # переиндексация — только новый сервер: список ящиков из его LDAP, старый может быть уже выключен
+    o = read_old(new, exclude | {host.lower()}, only) if reindex_only else read_old(old, exclude, only)
     acc_id = {dn_to_name(dn).lower(): first(a, "zimbraId") for dn, a in o["acc"]}
     accounts = sorted(dn_to_name(dn) for dn, _ in o["acc"])
     n_names = {dn_to_name(dn).lower() for dn, _ in new.search("(objectClass=zimbraAccount)", attrs=["uid"])}
@@ -1426,7 +1427,7 @@ def main():
     rc = 0
     try:
         if domains:
-            exclude = domain_scope(old, exclude, domains)
+            exclude = domain_scope(new if (args.reindex and not (do_ldap or do_data)) else old, exclude, domains)
             log(f"Домены: {', '.join(domains)}")
         if only:
             log(f"Учётки: {', '.join(sorted(only))}")
