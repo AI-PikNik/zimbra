@@ -637,12 +637,12 @@ def data_migrate(cfg, old, new, exclude, only, dry, workdir, types, since, worke
             if not sys.stdin.isatty():
                 die("нужно подтверждение: пользователи ещё работают на старом сервере? Если да — добавьте --yes")
             try:
-                ans = input("  Пользователи ещё работают на СТАРОМ сервере? Введите да, чтобы продолжить: ")
+                ans = input("  Пользователи ещё работают на СТАРОМ сервере? Продолжить? [да/нет]: ")
             except EOFError:
                 ans = ""
             log_file(f"  ответ: {ans}")
             if ans.strip().lower() not in ("да", "yes", "y", "д"):
-                die("отменено")
+                die("отменено (продолжение — ответ «да» или «yes»; без вопроса — ключ --yes)")
     if not reindex_only:
         log("  Обозначения: «почта 120 ✓» — на новом столько же, сколько на старом; "
             "«почта 118≠120 ✗» — на новом 118, на старом 120; «(+5)» — добавлено этим запуском")
@@ -856,8 +856,13 @@ def data_migrate(cfg, old, new, exclude, only, dry, workdir, types, since, worke
         except Exception as e:
             return [], f"контакты vCard: подсчёт папок: {e}"
         done = []
+        log_file(f"    {name}: контакты по папкам после архива: "
+                 + ", ".join(f"{p} {nf.get(p, ('', 'нет папки'))[1]}/{on}" for p, on in sorted(of.items())))
         for p, on in sorted(of.items()):
-            if p not in nf or nf[p][1] >= on:
+            if p not in nf:
+                done.append(f"{p}: папки нет на новом — пропущено")
+                continue
+            if nf[p][1] >= on:
                 continue
             fid, nn = nf[p]
             rel = urllib.parse.quote(p.lstrip("/"))
