@@ -707,20 +707,13 @@ sudo fail2ban-client set recidive unbanip 192.0.2.10
 sudo su - zimbra
 # исходящая почта через PMG (порт 26), второй — резерв
 zmprov mcf zimbraMtaRelayHost pmg1.example.com:26
-zmprov mcf zimbraMtaFallbackRelayHost pmg2.example.com:26   # см. предупреждение ниже
+zmprov mcf zimbraMtaFallbackRelayHost pmg2.example.com:26
 # PMG — доверенные хосты (важно и для SpamAssassin на Zimbra)
 zmprov ms $(zmhostname) zimbraMtaMyNetworks "127.0.0.0/8 [::1]/128 <ZIMBRA_IP>/32 <PMG1_IP>/32 <PMG2_IP>/32"
 zmcontrol restart
 ```
 
 Антиспам и антивирус на Zimbra остаются включёнными — второй уровень защиты.
-
-**Петля при остановленном amavis.** Запасной узел (`smtp_fallback_relay`) Postfix использует для **любой** неудачной доставки, в том числе для передачи письма в amavis (`127.0.0.1:10024/10026`). Если amavis не работает, входящее письмо уходит на PMG:26, PMG возвращает его на Zimbra, и так по кругу до «mail forwarding loop»: снаружи выглядит как «почта уходит, но не приходит». Признаки в `/var/log/zimbra.log`: `connect to 127.0.0.1[127.0.0.1]:10026: Connection refused`, следом `relay=<PMG>:26 … status=sent` для письма своему же получателю. После каждого перезапуска Zimbra и обновления — `zmcontrol status`: amavis должен быть `Running`. При сбое сначала убрать запасной узел, потом чинить amavis:
-
-```bash
-zmprov ms $(zmhostname) zimbraMtaFallbackRelayHost ""; zmmtactl reload; postconf smtp_fallback_relay   # пусто — петля остановлена
-grep -E ' amavis\[[0-9]+\]' /var/log/zimbra.log | tail -20                                          # причина остановки amavis
-```
 
 ### На PMG (master, синхронизируется на node)
 
