@@ -803,6 +803,15 @@ postconf -h transport_maps relayhost
 cat /etc/pmg/transport
 ```
 
+**Configuration → System → Options:**
+
+| Параметр | Значение | Зачем |
+| --- | --- | --- |
+| Administrator EMail | `postmaster@example.com` | **кому**: уведомления «Notify Admin» (`__ADMIN__`), ежедневные отчёты, служебные письма PMG. Список рассылки на admin@ и it1@ |
+| 'From:' for Admin Mail | `postmaster@example.com` | **от кого** в этих письмах. Только адрес: значение «Mail GateWay» без адреса Postfix превращает в `From: Mail@mx2…, GateWay@mx2…` — испорченный заголовок даёт +3 балла (`FROM_ADDR_WS`), и собственные уведомления PMG блокируются как спам |
+| Maillog base name | файл, куда реально пишет Postfix | по нему строятся Tracking Center и статистика; проверить `grep -c postfix /var/log/syslog /var/log/mail.log` и указать тот, где строк больше |
+| Consent Text | по решению; пример: «Acces permis doar persoanelor autorizate… / Доступ только для уполномоченных сотрудников…» | окно-предупреждение на странице входа в веб-интерфейс, вход только после согласия; на обработку почты не влияет. Проверить, не мешает ли входу в карантин по ссылке из отчёта |
+
 **Mail Proxy → Options** — принятые значения:
 
 | Параметр | Значение | Почему |
