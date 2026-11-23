@@ -200,6 +200,27 @@ zmamavisdctl restart; sleep 20; zmcontrol status | grep -i amavis      # Running
 grep -nE '^\$mydomain' /opt/zimbra/conf/amavisd.conf                    # 'example.com'
 ```
 
+**Кому amavis шлёт уведомления.** amavis отправляет уведомления через порт 10025, где алиасы и списки рассылки не раскрываются: уведомление на список (`postmaster@…`) или алиас уходит на транспорт `error` и возвращается отказом «`<адрес>`: `<домен>`». Поэтому адресат — **основной адрес настоящего ящика**; получателей заблокированных писем не уведомлять (иначе при каждой вредоносной рассылке сотрудники получают сотни писем «BANNED contents»):
+
+```bash
+# от zimbra
+zmlocalconfig -e av_notify_user=admin@example.com
+zmprov mcf zimbraVirusWarnRecipient FALSE
+zmamavisdctl restart; sleep 20; zmcontrol status | grep -i amavis                 # Running
+grep -nE 'virus_admin|mailfrom_notify_admin' /opt/zimbra/conf/amavisd.conf     # admin@example.com
+```
+
+**Служебные адреса доменов.** `postmaster@`, `abuse@`, `hostmaster@`, `webmaster@` каждого домена — алиасы на список `postmaster@example.com` (участники admin@, it1@). Письма снаружи идут обычным путём, алиасы там раскрываются.
+
+```bash
+L=postmaster@example.com
+zmprov adla $L abuse@example.com; zmprov adla $L hostmaster@example.com; zmprov adla $L webmaster@example.com
+for d in example.net example.org shop.example news.example intl.example; do
+  for u in postmaster abuse hostmaster webmaster; do zmprov adla $L $u@$d; done
+done
+zmprov gdl $L zimbraMailAlias
+```
+
 | Проверка | Команда | Ожидаемый результат |
 | --- | --- | --- |
 | freshclam работает | `ps -o pid,args -u zimbra \| grep [f]reshclam` | процесс freshclam |
