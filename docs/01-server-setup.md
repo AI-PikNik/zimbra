@@ -781,6 +781,17 @@ zmcontrol restart
 
 Антиспам и антивирус на Zimbra остаются включёнными — второй уровень защиты.
 
+**PMG обязательно в `zimbraMtaMyNetworks`.** Из этого параметра Zimbra строит и `mynetworks` Postfix, и `trusted_networks` SpamAssassin (`/opt/zimbra/data/spamassassin/localrules/salocal.cf`). Без адресов PMG SpamAssassin на Zimbra считает внешним отправителем сам PMG: проверяет SPF и обратную запись для mx1/mx2, а не для настоящего отправителя. Признаки во входящих: `RDNS_NONE` и `SPF_SOFTFAIL` у писем, которым PMG поставил `spf=pass` (+1,5 балла впустую). После исправления — `SPF_PASS`, итог ниже. Сопутствующее: `ALL_TRUSTED` (−1) у внешних писем — путь через доверенный PMG; на итоговую фильтрацию не влияет, основной фильтр — PMG.
+
+```bash
+# от zimbra; .210 — сервер БД, рассылающий почту через Zimbra
+zmprov ms $(zmhostname) zimbraMtaMyNetworks '127.0.0.0/8 [::1]/128 10.0.10.10/32 10.0.10.11/32 10.0.10.12/32 10.0.10.20/32'
+zmmtactl reload; zmamavisdctl restart; sleep 20; zmcontrol status | grep -iE 'amavis|mta'
+postconf mynetworks                                                               # .181 и .182 есть
+grep -n '^trusted_networks' /opt/zimbra/data/spamassassin/localrules/salocal.cf  # то же
+zmprov gcf zimbraAmavisOriginatingBypassSA                                        # FALSE — SpamAssassin на Zimbra проверяет и почту от PMG
+```
+
 ### На PMG (master, синхронизируется на node)
 
 | Раздел | Значение |
