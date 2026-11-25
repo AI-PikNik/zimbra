@@ -792,6 +792,8 @@ grep -n '^trusted_networks' /opt/zimbra/data/spamassassin/localrules/salocal.cf 
 zmprov gcf zimbraAmavisOriginatingBypassSA                                        # FALSE — SpamAssassin на Zimbra проверяет и почту от PMG
 ```
 
+Серверы-рассыльщики из `mynetworks` (сервер БД Oracle .210) подключаются к `mail-new:25` **без авторизации**: при `smtpd_tls_auth_only = yes` попытка `AUTH` без STARTTLS отклоняется (`auth=0/1` и отключение без отправки), а логин им не нужен — пересылку разрешает `mynetworks`.
+
 ### На PMG (master, синхронизируется на node)
 
 | Раздел | Значение |
